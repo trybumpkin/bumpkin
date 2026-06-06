@@ -4,7 +4,6 @@ import sys
 
 from bumpkin.release_job import main
 
-
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
