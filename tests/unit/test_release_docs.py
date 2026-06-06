@@ -19,7 +19,7 @@ def test_readme_frames_release_scoped_flow_as_primary_story() -> None:
     assert "MODELS_TOKEN" in readme
     assert "BUMPKIN_MODEL" in readme
     assert "BUMPKIN_MODELS_ENDPOINT" in readme
-    assert "uses: trybumpkin/bumpkin@v1" in readme
+    assert "uses: trybumpkin/bumpkin-action@v1" in readme
     assert "maintainer briefing" in readme
     assert "precomputed public changelog" in readme
     assert "ROADMAP.md" in readme

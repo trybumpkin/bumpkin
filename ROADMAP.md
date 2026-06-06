@@ -13,7 +13,7 @@ Right now the product mostly centers on:
 
 - `release_preview`
 - `release_publish`
-- a clean install path through `trybumpkin/bumpkin`
+- a clean install path through `trybumpkin/bumpkin-action`
 
 ## Current Support Reality
 

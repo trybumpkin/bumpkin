@@ -15,9 +15,9 @@ Bumpkin is a release assistant that analyzes merged PRs, determines version bump
 
 ## Setup
 
-Install Bumpkin as a GitHub Action directly from this repository:
+Install Bumpkin as a GitHub Action from the standalone action repo:
 
-- `uses: trybumpkin/bumpkin@v1`
+- `uses: trybumpkin/bumpkin-action@v1`
 
 Before you run it:
 
@@ -78,7 +78,7 @@ jobs:
           fetch-depth: 0
 
       - id: bumpkin
-        uses: trybumpkin/bumpkin@v1
+        uses: trybumpkin/bumpkin-action@v1
         with:
           operation: ${{ inputs.operation }}
           base_tag: ${{ inputs.base_tag }}
