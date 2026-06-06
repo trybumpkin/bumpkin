@@ -28,6 +28,7 @@ Give the workflow:
 
 ```yaml
 name: Bumpkin Release
+run-name: ${{ inputs.operation == 'release_publish' && 'Bumpkin Publish' || 'Bumpkin Preview' }}
 
 on:
   workflow_dispatch:

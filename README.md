@@ -41,6 +41,7 @@ BUMPKIN_MODELS_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/
 
 ```yaml
 name: Bumpkin Release
+run-name: ${{ inputs.operation == 'release_publish' && 'Bumpkin Publish' || 'Bumpkin Preview' }}
 
 on:
   workflow_dispatch:

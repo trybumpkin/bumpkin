@@ -42,6 +42,9 @@ def test_example_release_workflow_uses_release_scoped_operation() -> None:
         (repo_root / ".github" / "workflows" / "bumpkin.yml").read_text(encoding="utf-8")
     )
 
+    assert "Bumpkin Publish" in workflow["run-name"]
+    assert "Bumpkin Preview" in workflow["run-name"]
+
     workflow_on = workflow.get("on", workflow.get(True))
     assert workflow_on is not None
     dispatch_inputs = workflow_on["workflow_dispatch"]["inputs"]
