@@ -374,7 +374,9 @@ def _serialize_release_candidate(candidate: ReleaseCandidate) -> dict[str, objec
         "status": candidate.status,
         "release_notes": candidate.release_notes,
         "notes": list(candidate.notes),
-        "pull_requests": [_serialize_pull_request(pull_request) for pull_request in candidate.pull_requests],
+        "pull_requests": [
+            _serialize_pull_request(pull_request) for pull_request in candidate.pull_requests
+        ],
         "fingerprint": candidate.fingerprint,
     }
 
@@ -688,9 +690,7 @@ def _list_run_artifacts(
     timeout_seconds: int,
 ) -> list[dict[str, object]]:
     encoded_run_id = urllib.parse.quote(run_id, safe="")
-    url = (
-        f"https://api.github.com/repos/{repository}/actions/runs/{encoded_run_id}/artifacts?per_page=100"
-    )
+    url = f"https://api.github.com/repos/{repository}/actions/runs/{encoded_run_id}/artifacts?per_page=100"
     payload = _json_request(token=token, url=url, timeout_seconds=timeout_seconds)
     if not isinstance(payload, dict):
         return []
