@@ -19,6 +19,8 @@ def test_readme_frames_release_scoped_flow_as_primary_story() -> None:
     assert "BUMPKIN_MODEL" in readme
     assert "BUMPKIN_MODELS_ENDPOINT" in readme
     assert "trybumpkin/bumpkin-action" in readme
+    assert "maintainer briefing" in readme
+    assert "precomputed public changelog" in readme
     assert "ROADMAP.md" in readme
     assert "CONTRIBUTING.md" in readme
     assert "SECURITY.md" in readme
@@ -60,6 +62,8 @@ def test_marketplace_action_template_exists() -> None:
     assert "MODELS_TOKEN" in action_readme
     assert "BUMPKIN_MODEL" in action_readme
     assert "BUMPKIN_MODELS_ENDPOINT" in action_readme
+    assert "maintainer briefing" in action_readme
+    assert "publishes only the public changelog" in action_readme
 
 
 def test_roadmap_is_public_and_mentions_language_expansion() -> None:

@@ -29,11 +29,11 @@ inputs:
     required: false
     default: ""
   output_markdown:
-    description: "Release notes artifact path for release_preview and release_publish."
+    description: "Markdown output path. Preview writes the maintainer briefing; publish writes the public release body."
     required: false
     default: "artifacts/release/bumpkin-release-notes.md"
   candidate_output:
-    description: "Release candidate artifact path for release_preview and release_publish."
+    description: "Release candidate artifact path shared between release_preview and release_publish."
     required: false
     default: "artifacts/release/bumpkin-release-candidate.json"
   preview_run_id:
@@ -94,7 +94,7 @@ outputs:
     description: "Number of merged PRs included in the release batch."
     value: ${{ steps.bumpkin.outputs.release_pr_count }}
   release_notes_path:
-    description: "Path to the generated release notes artifact."
+    description: "Path to the generated markdown output artifact."
     value: ${{ steps.bumpkin.outputs.release_notes_path }}
   release_target_sha:
     description: "Resolved release target SHA."

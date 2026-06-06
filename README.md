@@ -10,7 +10,7 @@ Bumpkin is a release assistant that analyzes merged PRs, determines version bump
 1. finds the previous tag
 2. scans merged PRs since that tag
 3. determines the next version or `NO_BUMP`
-4. writes release notes for the batch
+4. writes a maintainer preview and public release notes for the batch
 5. optionally publishes the tag and GitHub Release
 
 ## Setup
@@ -107,13 +107,14 @@ For each release run, Bumpkin returns:
 - the proposed next tag
 - the release type
 - the included PR count
-- a release notes artifact
-- a run summary with `Release rationale`, versioning context, and key evidence
+- a preview artifact that includes `Release rationale`, versioning context, key evidence, and the final public changelog
+- a release candidate artifact that `release_publish` can verify and reuse
+- a public release body that only contains changelog sections when a release is published
 
 ## Release modes
 
-- `release_preview` builds the release plan, notes, and a release candidate artifact without publishing.
-- `release_publish` verifies a saved preview candidate and then creates the tag and GitHub Release.
+- `release_preview` builds a maintainer briefing plus a release candidate artifact without publishing.
+- `release_publish` verifies a saved preview candidate and then creates the tag and GitHub Release from the precomputed public changelog.
 - `NO_BUMP` means no release is needed.
 - `needs_review` means the batch should be reviewed before publishing.
 
@@ -123,7 +124,7 @@ From the Actions tab:
 
 1. run `Bumpkin Release`
 2. choose `release_preview`
-3. inspect the release notes artifact, release candidate artifact, and summary
+3. inspect the maintainer preview artifact, release candidate artifact, and summary
 4. run it again with `release_publish` when the preview looks right
 5. pass `preview_run_id` when you want to publish a specific preview run
 6. use `base_tag` when you want to preview from a specific release boundary

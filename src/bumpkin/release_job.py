@@ -107,7 +107,8 @@ class ReleasePlan:
     release_label: str | None
     pull_requests: tuple[ReleaseScopedPullRequest, ...]
     recommendations: tuple[ReleaseRecommendationRecord, ...]
-    release_notes: str
+    preview_notes: str
+    published_release_body: str
     notes: tuple[str, ...]
     status: str = "planned"
 
@@ -133,7 +134,8 @@ class ReleaseCandidate:
     next_tag: str | None
     release_label: str | None
     status: str
-    release_notes: str
+    preview_notes: str
+    published_release_body: str
     notes: tuple[str, ...]
     pull_requests: tuple[ReleaseScopedPullRequest, ...]
     fingerprint: str
@@ -295,6 +297,8 @@ def _candidate_fingerprint_payload(
     release_label: str | None,
     status: str,
     pull_requests: tuple[ReleaseScopedPullRequest, ...] | list[ReleaseScopedPullRequest],
+    preview_notes: str,
+    published_release_body: str,
 ) -> dict[str, object]:
     return {
         "repository": repository,
@@ -305,6 +309,8 @@ def _candidate_fingerprint_payload(
         "next_tag": next_tag,
         "release_label": release_label,
         "status": status,
+        "preview_notes": preview_notes,
+        "published_release_body": published_release_body,
         "pull_requests": [
             {
                 "number": pull_request.number,
@@ -338,6 +344,8 @@ def _build_release_candidate(
             release_label=plan.release_label,
             status=plan.status,
             pull_requests=plan.pull_requests,
+            preview_notes=plan.preview_notes,
+            published_release_body=plan.published_release_body,
         )
     )
     return ReleaseCandidate(
@@ -352,7 +360,8 @@ def _build_release_candidate(
         next_tag=plan.next_tag,
         release_label=plan.release_label,
         status=plan.status,
-        release_notes=plan.release_notes,
+        preview_notes=plan.preview_notes,
+        published_release_body=plan.published_release_body,
         notes=tuple(plan.notes),
         pull_requests=tuple(plan.pull_requests),
         fingerprint=fingerprint,
@@ -372,7 +381,8 @@ def _serialize_release_candidate(candidate: ReleaseCandidate) -> dict[str, objec
         "next_tag": candidate.next_tag,
         "release_label": candidate.release_label,
         "status": candidate.status,
-        "release_notes": candidate.release_notes,
+        "preview_notes": candidate.preview_notes,
+        "published_release_body": candidate.published_release_body,
         "notes": list(candidate.notes),
         "pull_requests": [
             _serialize_pull_request(pull_request) for pull_request in candidate.pull_requests
@@ -405,7 +415,8 @@ def _deserialize_release_candidate(payload: object) -> ReleaseCandidate:
         next_tag=str(payload_map.get("next_tag", "")).strip() or None,
         release_label=str(payload_map.get("release_label", "")).strip() or None,
         status=str(payload_map.get("status", "")).strip(),
-        release_notes=str(payload_map.get("release_notes", "")),
+        preview_notes=str(payload_map.get("preview_notes", "")),
+        published_release_body=str(payload_map.get("published_release_body", "")),
         notes=tuple(str(note).strip() for note in notes_raw if str(note).strip()),
         pull_requests=tuple(_deserialize_pull_request(item) for item in pull_requests_raw),
         fingerprint=str(payload_map.get("fingerprint", "")).strip(),
@@ -425,6 +436,8 @@ def _deserialize_release_candidate(payload: object) -> ReleaseCandidate:
             release_label=candidate.release_label,
             status=candidate.status,
             pull_requests=candidate.pull_requests,
+            preview_notes=candidate.preview_notes,
+            published_release_body=candidate.published_release_body,
         )
     )
     if candidate.fingerprint != expected_fingerprint:
@@ -442,7 +455,8 @@ def _release_candidate_to_plan(candidate: ReleaseCandidate) -> ReleasePlan:
         release_label=candidate.release_label,
         pull_requests=candidate.pull_requests,
         recommendations=(),
-        release_notes=candidate.release_notes,
+        preview_notes=candidate.preview_notes,
+        published_release_body=candidate.published_release_body,
         notes=candidate.notes,
         status=candidate.status,
     )
@@ -917,6 +931,8 @@ def _verify_release_candidate(
             release_label=candidate.release_label,
             status=candidate.status,
             pull_requests=current_pull_requests,
+            preview_notes=candidate.preview_notes,
+            published_release_body=candidate.published_release_body,
         )
     )
     if current_fingerprint != candidate.fingerprint:
@@ -933,7 +949,8 @@ def _verify_release_candidate(
         release_label=candidate.release_label,
         pull_requests=tuple(current_pull_requests),
         recommendations=(),
-        release_notes=candidate.release_notes,
+        preview_notes=candidate.preview_notes,
+        published_release_body=candidate.published_release_body,
         notes=candidate.notes,
         status=candidate.status,
     )
@@ -1074,6 +1091,65 @@ def _release_label_headline(
     return f"{count} merged PR(s) contributed to this release decision."
 
 
+def _parse_evidence_line(raw_line: str) -> dict[str, str]:
+    parts = [part.strip() for part in raw_line.split("|") if part.strip()]
+    if not parts:
+        return {}
+    parsed: dict[str, str] = {"path": parts[0]}
+    for part in parts[1:]:
+        key, sep, value = part.partition("=")
+        if not sep:
+            continue
+        normalized_value = " ".join(value.split()).strip()
+        if not normalized_value:
+            continue
+        parsed[key.strip().lower()] = normalized_value
+    return parsed
+
+
+def _format_rationale_sentence(
+    *,
+    record: ReleaseRecommendationRecord,
+    evidence: dict[str, str],
+) -> str | None:
+    path = evidence.get("path")
+    rule = evidence.get("rule", "").lower()
+    symbol = evidence.get("symbol", "").strip()
+    scope = evidence.get("scope", "").lower()
+    pr_number = record.pull_request.number
+
+    if not path:
+        return None
+
+    if rule == "export_symbol_removed":
+        if symbol:
+            return f"PR #{pr_number} removed exported API {symbol} in {path}."
+        return f"PR #{pr_number} removed a public API surface in {path}."
+    if rule == "export_symbol_changed":
+        if symbol:
+            return f"PR #{pr_number} changed exported API {symbol} in {path}."
+        return f"PR #{pr_number} changed a public API surface in {path}."
+    if rule == "export_symbol_added":
+        if symbol:
+            return f"PR #{pr_number} added exported API {symbol} in {path}."
+        return f"PR #{pr_number} added a public API surface in {path}."
+    if scope == "public_api":
+        return f"PR #{pr_number} changed public API behavior in {path}."
+    if scope == "runtime":
+        return f"PR #{pr_number} changed runtime behavior in {path}."
+    return f"PR #{pr_number} changed code in {path}."
+
+
+def _fallback_rationale_sentence(record: ReleaseRecommendationRecord) -> str:
+    summary = " ".join((record.summary or "").split()).strip()
+    if summary:
+        if summary.endswith("."):
+            return f"PR #{record.pull_request.number}: {summary}"
+        return f"PR #{record.pull_request.number}: {summary}."
+    title = record.pull_request.title.rstrip(".")
+    return f"PR #{record.pull_request.number} contributed to this release decision through {title}."
+
+
 def _build_release_why_lines(
     *,
     release_label: str | None,
@@ -1085,16 +1161,35 @@ def _build_release_why_lines(
     matching_records = _top_label_records(recommendations, normalized_label)
     if not matching_records:
         return []
-    lines = [_release_label_headline(normalized_label, matching_records)]
-    seen_reasoning: set[str] = set()
+    lines: list[str] = []
+    seen: set[str] = set()
     for record in matching_records:
-        reasoning = " ".join((record.reasoning or "").split()).strip()
-        if not reasoning or reasoning in seen_reasoning:
+        sentence: str | None = None
+        for raw_line in record.evidence_lines:
+            sentence = _format_rationale_sentence(
+                record=record,
+                evidence=_parse_evidence_line(raw_line),
+            )
+            if sentence:
+                break
+        if sentence is None:
+            sentence = _fallback_rationale_sentence(record)
+        if sentence in seen:
             continue
-        seen_reasoning.add(reasoning)
-        lines.append(reasoning.rstrip(".") + ".")
+        seen.add(sentence)
+        lines.append(sentence)
         if len(lines) >= 3:
             break
+    if normalized_label == "MAJOR":
+        lines.append("Breaking public APIs were removed or changed in this release batch.")
+    elif normalized_label == "MINOR":
+        lines.append("No exported APIs were removed or narrowed in this release batch.")
+    elif normalized_label == "PATCH":
+        lines.append(
+            "No public API additions or breaking removals were detected in this release batch."
+        )
+    elif normalized_label == "NO_BUMP":
+        lines.append("All included pull requests resolved to NO_BUMP.")
     return lines
 
 
@@ -1158,6 +1253,85 @@ def _build_release_evidence_lines(
     return evidence
 
 
+def _group_release_records(
+    recommendations: list[ReleaseRecommendationRecord],
+) -> tuple[
+    dict[str, list[ReleaseRecommendationRecord]], list[ReleaseRecommendationRecord], list[str]
+]:
+    grouped: dict[str, list[ReleaseRecommendationRecord]] = {
+        section: [] for section in _SECTION_ORDER
+    }
+    unresolved: list[ReleaseRecommendationRecord] = []
+    contributors: list[str] = []
+    seen_contributors: set[str] = set()
+    for record in recommendations:
+        if record.status != "classified" or not record.label:
+            unresolved.append(record)
+            continue
+        section = _SECTION_BY_LABEL.get(record.label, "Maintenance")
+        grouped.setdefault(section, []).append(record)
+        author = (record.pull_request.author_login or "").strip()
+        if author and author not in seen_contributors:
+            seen_contributors.add(author)
+            contributors.append(author)
+    return grouped, unresolved, contributors
+
+
+def _render_public_release_body(
+    recommendations: list[ReleaseRecommendationRecord],
+) -> str:
+    grouped, unresolved, contributors = _group_release_records(recommendations)
+    lines: list[str] = []
+    for section in _SECTION_ORDER:
+        section_records = grouped.get(section, [])
+        if not section_records:
+            continue
+        if lines:
+            lines.append("")
+        lines.append(f"## {section}")
+        for record in section_records:
+            pull_request = record.pull_request
+            author = (
+                f"@{pull_request.author_login}" if pull_request.author_login else "unknown author"
+            )
+            lines.append(
+                f"- [PR #{pull_request.number}]({pull_request.url}) by {author}: {pull_request.title.rstrip('.')}"
+            )
+
+    if unresolved:
+        if lines:
+            lines.append("")
+        lines.append("## Needs Review")
+        for record in unresolved:
+            pull_request = record.pull_request
+            author = (
+                f"@{pull_request.author_login}" if pull_request.author_login else "unknown author"
+            )
+            reason = (record.reason or record.status).rstrip(".")
+            lines.append(
+                f"- [PR #{pull_request.number}]({pull_request.url}) by {author}: {pull_request.title.rstrip('.')} ({reason})"
+            )
+
+    if contributors:
+        if lines:
+            lines.append("")
+        lines.extend(["## Contributors", ", ".join(f"@{author}" for author in contributors)])
+
+    return "\n".join(lines).strip() + ("\n" if lines else "")
+
+
+def _shift_markdown_headings(markdown: str, *, offset: int = 1) -> str:
+    shifted_lines: list[str] = []
+    for raw_line in markdown.splitlines():
+        if raw_line.startswith("#"):
+            marker, sep, rest = raw_line.partition(" ")
+            if sep:
+                shifted_lines.append(f"{'#' * (len(marker) + offset)} {rest}")
+                continue
+        shifted_lines.append(raw_line)
+    return "\n".join(shifted_lines).rstrip()
+
+
 def _aggregate_release_label(recommendations: list[ReleaseRecommendationRecord]) -> str | None:
     best_label: str | None = None
     best_rank = -1
@@ -1171,13 +1345,14 @@ def _aggregate_release_label(recommendations: list[ReleaseRecommendationRecord])
     return best_label
 
 
-def _render_release_notes(
+def _render_preview_notes(
     *,
     previous_tag: str | None,
     next_tag: str | None,
     release_label: str | None,
     recommendations: list[ReleaseRecommendationRecord],
     notes: tuple[str, ...] | list[str] = (),
+    published_release_body: str,
 ) -> str:
     heading = next_tag or "Release Preview"
     lines: list[str] = [f"# {heading}", ""]
@@ -1210,56 +1385,19 @@ def _render_release_notes(
         lines.extend(["", "## Key evidence"])
         lines.extend(f"- {line}" for line in evidence_lines)
 
-    grouped: dict[str, list[ReleaseRecommendationRecord]] = {
-        section: [] for section in _SECTION_ORDER
-    }
-    unresolved: list[ReleaseRecommendationRecord] = []
-    contributors: list[str] = []
-    seen_contributors: set[str] = set()
-    for record in recommendations:
-        if record.status != "classified" or not record.label:
-            unresolved.append(record)
-            continue
-        section = _SECTION_BY_LABEL.get(record.label, "Maintenance")
-        grouped.setdefault(section, []).append(record)
-        author = (record.pull_request.author_login or "").strip()
-        if author and author not in seen_contributors:
-            seen_contributors.add(author)
-            contributors.append(author)
-
-    for section in _SECTION_ORDER:
-        section_records = grouped.get(section, [])
-        if not section_records:
-            continue
-        lines.extend(["", f"## {section}"])
-        for record in section_records:
-            pull_request = record.pull_request
-            author = (
-                f"@{pull_request.author_login}" if pull_request.author_login else "unknown author"
-            )
-            lines.append(
-                f"- [PR #{pull_request.number}]({pull_request.url}) by {author}: {pull_request.title.rstrip('.')}"
-            )
-
-    if unresolved:
-        lines.extend(["", "## Needs Review"])
-        for record in unresolved:
-            pull_request = record.pull_request
-            author = (
-                f"@{pull_request.author_login}" if pull_request.author_login else "unknown author"
-            )
-            reason = (record.reason or record.status).rstrip(".")
-            lines.append(
-                f"- [PR #{pull_request.number}]({pull_request.url}) by {author}: {pull_request.title.rstrip('.')} ({reason})"
-            )
-
-    if contributors:
-        lines.extend(["", "## Contributors", ", ".join(f"@{author}" for author in contributors)])
+    if published_release_body:
+        lines.extend(
+            [
+                "",
+                "## Public release notes",
+                _shift_markdown_headings(published_release_body),
+            ]
+        )
 
     return "\n".join(lines).strip() + "\n"
 
 
-def _render_no_release_notes(
+def _render_no_release_preview_notes(
     *,
     previous_tag: str | None,
     release_label: str,
@@ -1300,6 +1438,46 @@ def _render_no_release_notes(
                 f"- [PR #{pull_request.number}]({pull_request.url}) by {author}: {pull_request.title.rstrip('.')}"
             )
 
+    return "\n".join(lines).strip() + "\n"
+
+
+def _render_publish_step_summary(
+    *,
+    status: str,
+    plan: ReleasePlan,
+    release_candidate: ReleaseCandidate,
+    release_url: str | None = None,
+    tag_url: str | None = None,
+) -> str:
+    title = {
+        "published": "# Release published",
+        "skipped": "# Release publish skipped",
+        "needs_review": "# Release publish blocked",
+    }.get(status, "# Release publish result")
+    lines = [title, ""]
+    if plan.previous_tag:
+        lines.append(f"Previous tag: {plan.previous_tag}")
+    if plan.next_tag:
+        lines.append(
+            f"Published tag: {plan.next_tag}"
+            if status == "published"
+            else f"Candidate tag: {plan.next_tag}"
+        )
+    if plan.release_label:
+        lines.append(f"Release type: {plan.release_label}")
+    lines.append(f"Included PRs: {len(plan.pull_requests)}")
+    if release_candidate.source_run_id:
+        lines.append(f"Preview run id: {release_candidate.source_run_id}")
+    if status == "published":
+        lines.append("Release candidate verified and published.")
+    elif status == "skipped":
+        lines.append("No release was published for this candidate.")
+    elif status == "needs_review":
+        lines.append("Release candidate still needs maintainer review before publish.")
+    if release_url:
+        lines.append(f"Release URL: {release_url}")
+    if tag_url:
+        lines.append(f"Tag URL: {tag_url}")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1355,10 +1533,11 @@ def prepare_release_plan(
             release_label=None,
             pull_requests=(),
             recommendations=(),
-            release_notes=(
+            preview_notes=(
                 f"# Release Preview\n\nPrevious tag: {previous_tag}\nIncluded PRs: 0\n\n"
                 "No merged pull requests were found in this release scope.\n"
             ),
+            published_release_body="",
             notes=tuple(notes),
         )
 
@@ -1374,12 +1553,14 @@ def prepare_release_plan(
         notes.append(
             "Release scope contains unresolved pull requests that need review before publish."
         )
-        release_notes = _render_release_notes(
+        published_release_body = _render_public_release_body(recommendations)
+        preview_notes = _render_preview_notes(
             previous_tag=previous_tag,
             next_tag=None,
             release_label=None,
             recommendations=recommendations,
             notes=notes,
+            published_release_body=published_release_body,
         )
         return ReleasePlan(
             status="needs_review",
@@ -1391,7 +1572,8 @@ def prepare_release_plan(
             release_label=None,
             pull_requests=tuple(pull_requests),
             recommendations=tuple(recommendations),
-            release_notes=release_notes,
+            preview_notes=preview_notes,
+            published_release_body="",
             notes=tuple(notes),
         )
     if release_label is None:
@@ -1402,7 +1584,7 @@ def prepare_release_plan(
         notes.append(
             "Release scope resolved to NO_BUMP; no tag or GitHub Release will be published."
         )
-        release_notes = _render_no_release_notes(
+        preview_notes = _render_no_release_preview_notes(
             previous_tag=previous_tag,
             release_label=release_label,
             recommendations=recommendations,
@@ -1418,17 +1600,20 @@ def prepare_release_plan(
             release_label=release_label,
             pull_requests=tuple(pull_requests),
             recommendations=tuple(recommendations),
-            release_notes=release_notes,
+            preview_notes=preview_notes,
+            published_release_body="",
             notes=tuple(notes),
         )
     if not next_tag:
         raise RuntimeError("Could not compute the next release tag from the current scope.")
-    release_notes = _render_release_notes(
+    published_release_body = _render_public_release_body(recommendations)
+    preview_notes = _render_preview_notes(
         previous_tag=previous_tag,
         next_tag=next_tag,
         release_label=release_label,
         recommendations=recommendations,
         notes=notes,
+        published_release_body=published_release_body,
     )
     return ReleasePlan(
         status="planned",
@@ -1440,7 +1625,8 @@ def prepare_release_plan(
         release_label=release_label,
         pull_requests=tuple(pull_requests),
         recommendations=tuple(recommendations),
-        release_notes=release_notes,
+        preview_notes=preview_notes,
+        published_release_body=published_release_body,
         notes=tuple(notes),
     )
 
@@ -1479,7 +1665,7 @@ def publish_release_plan(
             repository=plan.repository,
             tag_name=plan.next_tag,
             target_sha=plan.target_sha,
-            body=plan.release_notes,
+            body=plan.published_release_body,
             name=plan.next_tag,
         )
     )
@@ -1591,7 +1777,10 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
             source_run_id=os.getenv("GITHUB_RUN_ID", "").strip() or None,
         )
 
-    notes_path = _write_text_file(parsed.output_markdown, plan.release_notes)
+    output_body = (
+        plan.preview_notes if parsed.operation != "publish" else plan.published_release_body
+    )
+    notes_path = _write_text_file(parsed.output_markdown, output_body)
     candidate_path = _write_json_file(
         parsed.candidate_output,
         _serialize_release_candidate(candidate),
@@ -1600,7 +1789,15 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
         execution = publish_release_plan(plan, github_token=parsed.github_token)
         release_url = execution.release_result.url if execution.release_result else None
         tag_url = execution.tag_result.url if execution.tag_result else None
-        _append_step_summary(plan.release_notes)
+        _append_step_summary(
+            _render_publish_step_summary(
+                status=execution.status,
+                plan=plan,
+                release_candidate=candidate,
+                release_url=release_url,
+                tag_url=tag_url,
+            )
+        )
         _write_github_output(
             _build_summary_payload(
                 status=execution.status,
@@ -1632,7 +1829,7 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
         )
         return 0
 
-    _append_step_summary(plan.release_notes)
+    _append_step_summary(plan.preview_notes)
     status = plan.status if plan.pull_requests else "skipped"
     _write_github_output(
         _build_summary_payload(

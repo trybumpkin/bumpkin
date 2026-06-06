@@ -186,26 +186,37 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert plan.status == "planned"
     assert plan.target_sha == "sha-main"
     assert [pull.number for pull in plan.pull_requests] == [12, 14]
-    assert "## Release rationale" in plan.release_notes
-    assert "- User-facing additive changes were detected in 1 merged PR(s)." in plan.release_notes
-    assert "## Versioning context" in plan.release_notes
-    assert "- Detected versioning scheme: semver." in plan.release_notes
-    assert "## Key evidence" in plan.release_notes
+    assert "## Release rationale" in plan.preview_notes
+    assert "- PR #12 added exported API publicThing in src/api.py." in plan.preview_notes
     assert (
-        "- PR #12: src/api.py - export symbol added; public api; publicThing" in plan.release_notes
+        "- No exported APIs were removed or narrowed in this release batch." in plan.preview_notes
     )
-    assert "## Features" in plan.release_notes
-    assert "## Fixes" in plan.release_notes
+    assert "## Versioning context" in plan.preview_notes
+    assert "- Detected versioning scheme: semver." in plan.preview_notes
+    assert "## Key evidence" in plan.preview_notes
+    assert (
+        "- PR #12: src/api.py - export symbol added; public api; publicThing" in plan.preview_notes
+    )
+    assert "## Public release notes" in plan.preview_notes
+    assert "## Features" in plan.preview_notes
+    assert "## Fixes" in plan.preview_notes
     assert (
         "- [PR #12](https://github.com/acme/repo/pull/12) by @alice: Add release-scoped aggregation"
-        in plan.release_notes
+        in plan.preview_notes
     )
     assert (
         "- [PR #14](https://github.com/acme/repo/pull/14) by @bob: Fix duplicate tag publishing"
-        in plan.release_notes
+        in plan.preview_notes
     )
-    assert "## Contributors" in plan.release_notes
-    assert "@alice, @bob" in plan.release_notes
+    assert "## Release rationale" not in plan.published_release_body
+    assert "## Versioning context" not in plan.published_release_body
+    assert "## Key evidence" not in plan.published_release_body
+    assert "Previous tag:" not in plan.published_release_body
+    assert "Next tag:" not in plan.published_release_body
+    assert "## Features" in plan.published_release_body
+    assert "## Fixes" in plan.published_release_body
+    assert "## Contributors" in plan.published_release_body
+    assert "@alice, @bob" in plan.published_release_body
 
 
 def test_prepare_release_plan_returns_empty_preview_when_scope_has_no_pull_requests(
@@ -236,8 +247,9 @@ def test_prepare_release_plan_returns_empty_preview_when_scope_has_no_pull_reque
     assert plan.release_label is None
     assert plan.status == "skipped"
     assert plan.pull_requests == ()
-    assert "Included PRs: 0" in plan.release_notes
-    assert "No merged pull requests were found in this release scope." in plan.release_notes
+    assert "Included PRs: 0" in plan.preview_notes
+    assert "No merged pull requests were found in this release scope." in plan.preview_notes
+    assert plan.published_release_body == ""
 
 
 def test_prepare_release_plan_returns_no_release_plan_for_no_bump_batch(monkeypatch) -> None:
@@ -273,11 +285,12 @@ def test_prepare_release_plan_returns_no_release_plan_for_no_bump_batch(monkeypa
     assert plan.next_tag is None
     assert plan.release_label == "NO_BUMP"
     assert plan.status == "skipped"
-    assert "No new release will be published for this batch." in plan.release_notes
-    assert "All included pull requests were classified as NO_BUMP." in plan.release_notes
-    assert "## Versioning context" in plan.release_notes
-    assert "- Detected versioning scheme: semver." in plan.release_notes
-    assert "## Included PRs" in plan.release_notes
+    assert "No new release will be published for this batch." in plan.preview_notes
+    assert "All included pull requests were classified as NO_BUMP." in plan.preview_notes
+    assert "## Versioning context" in plan.preview_notes
+    assert "- Detected versioning scheme: semver." in plan.preview_notes
+    assert "## Included PRs" in plan.preview_notes
+    assert plan.published_release_body == ""
 
 
 def test_prepare_release_plan_explains_zero_based_versioning_context(monkeypatch) -> None:
@@ -312,10 +325,10 @@ def test_prepare_release_plan_explains_zero_based_versioning_context(monkeypatch
     assert plan.previous_tag == "0.12.1"
     assert plan.next_tag == "0.13.0"
     assert plan.release_label == "MAJOR"
-    assert "- Detected versioning scheme: zero-based." in plan.release_notes
+    assert "- Detected versioning scheme: zero-based." in plan.preview_notes
     assert (
         "- Zero-based policy: breaking changes before 1.0.0 bump the minor version."
-        in plan.release_notes
+        in plan.preview_notes
     )
 
 
@@ -352,8 +365,10 @@ def test_prepare_release_plan_returns_needs_review_for_unresolved_batch(monkeypa
     assert plan.previous_tag == "v1.2.3"
     assert plan.next_tag is None
     assert plan.release_label is None
-    assert "## Needs Review" in plan.release_notes
-    assert "Refactor boundary behavior" in plan.release_notes
+    assert "## Public release notes" in plan.preview_notes
+    assert "## Needs Review" in plan.preview_notes
+    assert "Refactor boundary behavior" in plan.preview_notes
+    assert plan.published_release_body == ""
 
 
 def test_publish_release_plan_accepts_existing_tag_and_updates_release() -> None:
@@ -366,7 +381,8 @@ def test_publish_release_plan_accepts_existing_tag_and_updates_release() -> None
         release_label="MINOR",
         pull_requests=(),
         recommendations=(),
-        release_notes="# v1.3.0\n",
+        preview_notes="# v1.3.0\n",
+        published_release_body="## Features\n- public change\n",
         notes=(),
     )
     tag_publisher = _FakeTagPublisher(status="exists")
@@ -385,7 +401,7 @@ def test_publish_release_plan_accepts_existing_tag_and_updates_release() -> None
     release_call = cast("ReleasePublishRequest", release_publisher.calls[0])
     assert tag_call.tag_name == "v1.3.0"
     assert release_call.tag_name == "v1.3.0"
-    assert release_call.body == "# v1.3.0\n"
+    assert release_call.body == "## Features\n- public change\n"
 
 
 def test_publish_release_plan_skips_no_bump_batches() -> None:
@@ -398,7 +414,8 @@ def test_publish_release_plan_skips_no_bump_batches() -> None:
         release_label="NO_BUMP",
         pull_requests=(),
         recommendations=(),
-        release_notes="# Release Preview\n",
+        preview_notes="# Release Preview\n",
+        published_release_body="",
         notes=(),
     )
 
@@ -419,7 +436,8 @@ def test_publish_release_plan_skips_empty_release_batches() -> None:
         release_label=None,
         pull_requests=(),
         recommendations=(),
-        release_notes="# Release Preview\n",
+        preview_notes="# Release Preview\n",
+        published_release_body="",
         notes=(),
         status="skipped",
     )
@@ -441,7 +459,8 @@ def test_publish_release_plan_blocks_needs_review_batches() -> None:
         release_label=None,
         pull_requests=(),
         recommendations=(),
-        release_notes="# Release Preview\n",
+        preview_notes="# Release Preview\n",
+        published_release_body="",
         notes=(),
         status="needs_review",
     )
@@ -469,7 +488,8 @@ def test_verify_release_candidate_reuses_preview_scope(monkeypatch) -> None:
         release_label="MINOR",
         pull_requests=(pr_12,),
         recommendations=(),
-        release_notes="# v1.3.0\n",
+        preview_notes="# preview\n",
+        published_release_body="## Features\n- public change\n",
         notes=("Detected versioning scheme: semver.",),
     )
     candidate = _build_release_candidate(
@@ -526,7 +546,8 @@ def test_verify_release_candidate_rejects_changed_release_scope(monkeypatch) -> 
         release_label="MINOR",
         pull_requests=(pr_12,),
         recommendations=(),
-        release_notes="# v1.3.0\n",
+        preview_notes="# preview\n",
+        published_release_body="## Features\n- public change\n",
         notes=("Detected versioning scheme: semver.",),
     )
     candidate = _build_release_candidate(
@@ -559,14 +580,14 @@ def test_verify_release_candidate_rejects_changed_release_scope(monkeypatch) -> 
 
 
 def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatch) -> None:
-    rendered_release_notes = (
+    rendered_preview_notes = (
         "# v1.3.0\n\n"
         "Previous tag: v1.2.3\n"
         "Next tag: v1.3.0\n"
         "Release type: MINOR\n"
         "Included PRs: 1\n\n"
         "## Release rationale\n"
-        "- User-facing additive changes were detected in 1 merged PR(s).\n"
+        "- PR #12 added exported API publicThing in src/api.py.\n"
     )
     plan = ReleasePlan(
         repository="acme/repo",
@@ -584,7 +605,8 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
             ),
         ),
         recommendations=(),
-        release_notes=rendered_release_notes,
+        preview_notes=rendered_preview_notes,
+        published_release_body="## Features\n- public change\n",
         notes=(),
     )
     notes_path = tmp_path / "release-notes.md"
@@ -611,24 +633,19 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
     )
 
     assert exit_code == 0
-    assert notes_path.read_text(encoding="utf-8") == rendered_release_notes
+    assert notes_path.read_text(encoding="utf-8") == rendered_preview_notes
     assert candidate_path.exists()
     assert "release_status<<__BUMPKIN_EOF__" in output_path.read_text(encoding="utf-8")
     assert "release_candidate_path<<__BUMPKIN_EOF__" in output_path.read_text(encoding="utf-8")
     assert "planned" in output_path.read_text(encoding="utf-8")
-    assert summary_path.read_text(encoding="utf-8").strip() == rendered_release_notes.strip()
+    assert summary_path.read_text(encoding="utf-8").strip() == rendered_preview_notes.strip()
 
 
 def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -> None:
-    rendered_release_notes = (
-        "# v1.3.0\n\n"
-        "Previous tag: v1.2.3\n"
-        "Next tag: v1.3.0\n"
-        "Release type: MINOR\n"
-        "Included PRs: 1\n\n"
-        "## Release rationale\n"
-        "- User-facing additive changes were detected in 1 merged PR(s).\n"
+    rendered_preview_notes = (
+        "# v1.3.0\n\n## Release rationale\n- PR #12 added exported API publicThing in src/api.py.\n"
     )
+    published_release_body = "## Features\n- public change\n"
     plan = ReleasePlan(
         repository="acme/repo",
         target_ref="main",
@@ -645,7 +662,8 @@ def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -
             ),
         ),
         recommendations=(),
-        release_notes=rendered_release_notes,
+        preview_notes=rendered_preview_notes,
+        published_release_body=published_release_body,
         notes=(),
     )
     candidate = _build_release_candidate(
@@ -704,13 +722,18 @@ def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -
     )
 
     assert exit_code == 0
+    assert notes_path.read_text(encoding="utf-8") == published_release_body
     assert candidate_path.exists()
     output_text = output_path.read_text(encoding="utf-8")
     assert "release_status<<__BUMPKIN_EOF__" in output_text
     assert "release_candidate_run_id<<__BUMPKIN_EOF__" in output_text
     assert "published" in output_text
     assert "https://github.com/acme/repo/releases/tag/v1.3.0" in output_text
-    assert summary_path.read_text(encoding="utf-8").strip() == rendered_release_notes.strip()
+    summary_text = summary_path.read_text(encoding="utf-8")
+    assert "# Release published" in summary_text
+    assert "Preview run id: 555" in summary_text
+    assert "Release candidate verified and published." in summary_text
+    assert "## Release rationale" not in summary_text
 
 
 def test_run_release_job_publish_requires_preview_candidate(tmp_path, monkeypatch) -> None:

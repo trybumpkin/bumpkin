@@ -175,10 +175,14 @@ def test_release_job_flow_plans_and_publishes_release_batch(monkeypatch) -> None
     assert plan.next_tag == "v1.3.0"
     assert plan.release_label == "MINOR"
     assert plan.status == "planned"
-    assert "## Release rationale" in plan.release_notes
-    assert "## Key evidence" in plan.release_notes
-    assert "## Features" in plan.release_notes
-    assert "## Fixes" in plan.release_notes
+    assert "## Release rationale" in plan.preview_notes
+    assert "PR #31 added exported API publicThing in src/api.ts." in plan.preview_notes
+    assert "## Key evidence" in plan.preview_notes
+    assert "## Public release notes" in plan.preview_notes
+    assert "## Features" in plan.published_release_body
+    assert "## Fixes" in plan.published_release_body
+    assert "## Release rationale" not in plan.published_release_body
+    assert "## Key evidence" not in plan.published_release_body
     assert isinstance(result, ReleaseExecutionResult)
     assert result.status == "published"
     assert len(tag_publisher.calls) == 1
@@ -187,6 +191,7 @@ def test_release_job_flow_plans_and_publishes_release_batch(monkeypatch) -> None
     release_call = cast("ReleasePublishRequest", release_publisher.calls[0])
     assert tag_call.tag_name == "v1.3.0"
     assert release_call.tag_name == "v1.3.0"
+    assert release_call.body == plan.published_release_body
 
 
 def test_release_job_flow_skips_publish_for_no_bump_batch(monkeypatch) -> None:
@@ -229,8 +234,9 @@ def test_release_job_flow_skips_publish_for_no_bump_batch(monkeypatch) -> None:
     assert plan.release_label == "NO_BUMP"
     assert plan.status == "skipped"
     assert plan.next_tag is None
-    assert "No new release will be published for this batch." in plan.release_notes
-    assert "## Versioning context" in plan.release_notes
+    assert "No new release will be published for this batch." in plan.preview_notes
+    assert "## Versioning context" in plan.preview_notes
+    assert plan.published_release_body == ""
     assert result.status == "skipped"
     assert tag_publisher.calls == []
     assert release_publisher.calls == []
@@ -268,5 +274,7 @@ def test_release_job_flow_surfaces_needs_review_batch(monkeypatch) -> None:
 
     assert plan.status == "needs_review"
     assert plan.next_tag is None
-    assert "## Needs Review" in plan.release_notes
+    assert "## Public release notes" in plan.preview_notes
+    assert "## Needs Review" in plan.preview_notes
+    assert plan.published_release_body == ""
     assert result.status == "needs_review"
