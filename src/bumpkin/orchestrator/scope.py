@@ -146,7 +146,7 @@ def github_api_request(token: str, url: str) -> Any:
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "bumpkin-action",
+            "User-Agent": "bumpkin",
         },
     )
     try:

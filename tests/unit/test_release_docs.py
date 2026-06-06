@@ -51,23 +51,6 @@ def test_env_example_marks_app_runtime_as_optional() -> None:
     assert "BUMPKIN_APP_MODE=shell" not in env_example
 
 
-def test_marketplace_action_template_exists() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    action_readme = (
-        repo_root / "scripts" / "templates" / "marketplace_action_readme.template"
-    ).read_text(encoding="utf-8")
-
-    assert "# Bumpkin Action" in action_readme
-    assert "run-name:" in action_readme
-    assert "preview_run_id" in action_readme
-    assert "actions: read" in action_readme
-    assert "MODELS_TOKEN" in action_readme
-    assert "BUMPKIN_MODEL" in action_readme
-    assert "BUMPKIN_MODELS_ENDPOINT" in action_readme
-    assert "maintainer briefing" in action_readme
-    assert "publishes only the public changelog" in action_readme
-
-
 def test_roadmap_is_public_and_mentions_language_expansion() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")

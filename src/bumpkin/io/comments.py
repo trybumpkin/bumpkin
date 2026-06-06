@@ -741,7 +741,7 @@ def _api_request(token: str, url: str, method: str, payload: dict[str, Any] | No
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "Content-Type": "application/json",
-            "User-Agent": "bumpkin-action",
+            "User-Agent": "bumpkin",
         },
     )
     with urllib.request.urlopen(req) as response:

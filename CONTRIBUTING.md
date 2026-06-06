@@ -4,13 +4,11 @@ Thanks for wanting to contribute to Bumpkin.
 
 ## What kind of repo this is
 
-This repo is the main public OSS home for Bumpkin.
+This repo is the public OSS home, source tree, and GitHub Action install target for Bumpkin.
 
-The install target for GitHub Actions is:
+Install target:
 
-- `trybumpkin/bumpkin-action`
-
-This repo is where the source, tests, roadmap, and release logic evolve.
+- `trybumpkin/bumpkin`
 
 ## Good first contribution areas
 
