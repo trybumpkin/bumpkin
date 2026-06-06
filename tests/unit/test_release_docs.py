@@ -50,7 +50,6 @@ def test_env_example_marks_app_runtime_as_optional() -> None:
     )
     assert "BUMPKIN_APP_MODE=shell" not in env_example
 
-
 def test_roadmap_is_public_and_mentions_language_expansion() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
