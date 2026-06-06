@@ -187,7 +187,11 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert plan.target_sha == "sha-main"
     assert [pull.number for pull in plan.pull_requests] == [12, 14]
     assert "## Release rationale" in plan.preview_notes
-    assert "- PR #12 added exported API publicThing in src/api.py." in plan.preview_notes
+    assert (
+        "- PR #12 added exported API `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py)."
+        in plan.preview_notes
+    )
     assert (
         "- No exported APIs were removed or narrowed in this release batch." in plan.preview_notes
     )
@@ -195,7 +199,8 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert "- Detected versioning scheme: semver." in plan.preview_notes
     assert "## Key evidence" in plan.preview_notes
     assert (
-        "- PR #12: src/api.py - export symbol added; public api; publicThing" in plan.preview_notes
+        "- PR #12: [`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py) - "
+        "export symbol added; public api; `publicThing`" in plan.preview_notes
     )
     assert "## Public release notes" in plan.preview_notes
     assert "## Features" in plan.preview_notes
@@ -587,7 +592,8 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
         "Release type: MINOR\n"
         "Included PRs: 1\n\n"
         "## Release rationale\n"
-        "- PR #12 added exported API publicThing in src/api.py.\n"
+        "- PR #12 added exported API `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py).\n"
     )
     plan = ReleasePlan(
         repository="acme/repo",
@@ -643,7 +649,9 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
 
 def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -> None:
     rendered_preview_notes = (
-        "# v1.3.0\n\n## Release rationale\n- PR #12 added exported API publicThing in src/api.py.\n"
+        "# v1.3.0\n\n## Release rationale\n"
+        "- PR #12 added exported API `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py).\n"
     )
     published_release_body = "## Features\n- public change\n"
     plan = ReleasePlan(

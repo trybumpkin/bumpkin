@@ -1107,10 +1107,21 @@ def _parse_evidence_line(raw_line: str) -> dict[str, str]:
     return parsed
 
 
+def _format_preview_file_link(*, repository: str, target_sha: str, path: str) -> str:
+    normalized_path = path.strip().lstrip("/")
+    if not repository.strip() or not target_sha.strip() or not normalized_path:
+        return path
+    encoded_path = urllib.parse.quote(normalized_path, safe="/")
+    return (
+        f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
+    )
+
+
 def _format_rationale_sentence(
     *,
     record: ReleaseRecommendationRecord,
     evidence: dict[str, str],
+    target_sha: str,
 ) -> str | None:
     path = evidence.get("path")
     rule = evidence.get("rule", "").lower()
@@ -1120,24 +1131,30 @@ def _format_rationale_sentence(
 
     if not path:
         return None
+    linked_path = _format_preview_file_link(
+        repository=record.pull_request.repository,
+        target_sha=target_sha,
+        path=path,
+    )
+    formatted_symbol = f"`{symbol}`" if symbol else ""
 
     if rule == "export_symbol_removed":
         if symbol:
-            return f"PR #{pr_number} removed exported API {symbol} in {path}."
-        return f"PR #{pr_number} removed a public API surface in {path}."
+            return f"PR #{pr_number} removed exported API {formatted_symbol} in {linked_path}."
+        return f"PR #{pr_number} removed a public API surface in {linked_path}."
     if rule == "export_symbol_changed":
         if symbol:
-            return f"PR #{pr_number} changed exported API {symbol} in {path}."
-        return f"PR #{pr_number} changed a public API surface in {path}."
+            return f"PR #{pr_number} changed exported API {formatted_symbol} in {linked_path}."
+        return f"PR #{pr_number} changed a public API surface in {linked_path}."
     if rule == "export_symbol_added":
         if symbol:
-            return f"PR #{pr_number} added exported API {symbol} in {path}."
-        return f"PR #{pr_number} added a public API surface in {path}."
+            return f"PR #{pr_number} added exported API {formatted_symbol} in {linked_path}."
+        return f"PR #{pr_number} added a public API surface in {linked_path}."
     if scope == "public_api":
-        return f"PR #{pr_number} changed public API behavior in {path}."
+        return f"PR #{pr_number} changed public API behavior in {linked_path}."
     if scope == "runtime":
-        return f"PR #{pr_number} changed runtime behavior in {path}."
-    return f"PR #{pr_number} changed code in {path}."
+        return f"PR #{pr_number} changed runtime behavior in {linked_path}."
+    return f"PR #{pr_number} changed code in {linked_path}."
 
 
 def _fallback_rationale_sentence(record: ReleaseRecommendationRecord) -> str:
@@ -1154,6 +1171,7 @@ def _build_release_why_lines(
     *,
     release_label: str | None,
     recommendations: list[ReleaseRecommendationRecord],
+    target_sha: str,
 ) -> list[str]:
     normalized_label = _normalize_label(release_label)
     if normalized_label is None:
@@ -1169,6 +1187,7 @@ def _build_release_why_lines(
             sentence = _format_rationale_sentence(
                 record=record,
                 evidence=_parse_evidence_line(raw_line),
+                target_sha=target_sha,
             )
             if sentence:
                 break
@@ -1193,11 +1212,20 @@ def _build_release_why_lines(
     return lines
 
 
-def _humanize_evidence_line(line: str) -> str:
+def _humanize_evidence_line(
+    line: str,
+    *,
+    repository: str,
+    target_sha: str,
+) -> str:
     parts = [part.strip() for part in line.split("|") if part.strip()]
     if not parts:
         return line.strip()
-    path = parts[0]
+    path = _format_preview_file_link(
+        repository=repository,
+        target_sha=target_sha,
+        path=parts[0],
+    )
     details: list[str] = []
     for part in parts[1:]:
         key, sep, value = part.partition("=")
@@ -1217,6 +1245,9 @@ def _humanize_evidence_line(line: str) -> str:
         if normalized_key == "scope":
             details.append(normalized_value.replace("_", " "))
             continue
+        if normalized_key == "symbol":
+            details.append(f"`{normalized_value}`")
+            continue
         details.append(normalized_value)
     if not details:
         return path
@@ -1227,6 +1258,7 @@ def _build_release_evidence_lines(
     *,
     release_label: str | None,
     recommendations: list[ReleaseRecommendationRecord],
+    target_sha: str,
     max_items: int = 3,
 ) -> list[str]:
     evidence: list[str] = []
@@ -1234,7 +1266,11 @@ def _build_release_evidence_lines(
     has_detailed_evidence = False
     for record in _top_label_records(recommendations, release_label):
         for raw_line in record.evidence_lines:
-            detail = _humanize_evidence_line(raw_line)
+            detail = _humanize_evidence_line(
+                raw_line,
+                repository=record.pull_request.repository,
+                target_sha=target_sha,
+            )
             line = f"PR #{record.pull_request.number}: {detail}"
             if line in seen:
                 continue
@@ -1347,6 +1383,7 @@ def _aggregate_release_label(recommendations: list[ReleaseRecommendationRecord])
 
 def _render_preview_notes(
     *,
+    target_sha: str,
     previous_tag: str | None,
     next_tag: str | None,
     release_label: str | None,
@@ -1367,6 +1404,7 @@ def _render_preview_notes(
     why_lines = _build_release_why_lines(
         release_label=release_label,
         recommendations=recommendations,
+        target_sha=target_sha,
     )
     if why_lines:
         lines.extend(["", "## Release rationale"])
@@ -1380,6 +1418,7 @@ def _render_preview_notes(
     evidence_lines = _build_release_evidence_lines(
         release_label=release_label,
         recommendations=recommendations,
+        target_sha=target_sha,
     )
     if evidence_lines:
         lines.extend(["", "## Key evidence"])
@@ -1555,6 +1594,7 @@ def prepare_release_plan(
         )
         published_release_body = _render_public_release_body(recommendations)
         preview_notes = _render_preview_notes(
+            target_sha=target_sha,
             previous_tag=previous_tag,
             next_tag=None,
             release_label=None,
@@ -1608,6 +1648,7 @@ def prepare_release_plan(
         raise RuntimeError("Could not compute the next release tag from the current scope.")
     published_release_body = _render_public_release_body(recommendations)
     preview_notes = _render_preview_notes(
+        target_sha=target_sha,
         previous_tag=previous_tag,
         next_tag=next_tag,
         release_label=release_label,

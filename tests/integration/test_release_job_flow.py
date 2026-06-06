@@ -176,8 +176,16 @@ def test_release_job_flow_plans_and_publishes_release_batch(monkeypatch) -> None
     assert plan.release_label == "MINOR"
     assert plan.status == "planned"
     assert "## Release rationale" in plan.preview_notes
-    assert "PR #31 added exported API publicThing in src/api.ts." in plan.preview_notes
+    assert (
+        "PR #31 added exported API `publicThing` in "
+        "[`src/api.ts`](https://github.com/acme/repo/blob/sha-main/src/api.ts)."
+        in plan.preview_notes
+    )
     assert "## Key evidence" in plan.preview_notes
+    assert (
+        "PR #31: [`src/api.ts`](https://github.com/acme/repo/blob/sha-main/src/api.ts) - "
+        "export symbol added; public api; `publicThing`" in plan.preview_notes
+    )
     assert "## Public release notes" in plan.preview_notes
     assert "## Features" in plan.published_release_body
     assert "## Fixes" in plan.published_release_body
