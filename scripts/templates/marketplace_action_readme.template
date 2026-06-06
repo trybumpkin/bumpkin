@@ -63,7 +63,7 @@ jobs:
           fetch-depth: 0
 
       - id: bumpkin
-        uses: trybumpkin/bumpkin-action@v1
+        uses: trybumpkin/bumpkin@v1
         with:
           operation: ${{ inputs.operation }}
           base_tag: ${{ inputs.base_tag }}
