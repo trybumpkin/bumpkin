@@ -1,4 +1,4 @@
-name: "Bumpkin Release Action"
+name: "Bumpkin Release Planner"
 description: "Analyze merged PRs, determine version bumps, and prepare release notes."
 branding:
   icon: "git-merge"
