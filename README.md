@@ -4,6 +4,11 @@
 
 Bumpkin is a release assistant that analyzes merged PRs, determines version bumps, and writes release notes - no commit conventions required.
 
+## Demo
+
+<video src="assets/bumpkin.mp4" controls width="100%"></video>
+
+[Open the demo video directly](assets/bumpkin.mp4)
 
 ## What it does
 
