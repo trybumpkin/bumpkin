@@ -6,9 +6,13 @@ Bumpkin is a release assistant that analyzes merged PRs, determines version bump
 
 ## Demo
 
-<video src="assets/bumpkin.mp4" controls width="100%"></video>
+### Preview
 
-[Open the demo video directly](assets/bumpkin.mp4)
+![Bumpkin preview demo](assets/bumpkin-preview.webp)
+
+### Publish
+
+![Bumpkin publish demo](assets/bumpkin-publish.webp)
 
 ## What it does
 
