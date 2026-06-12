@@ -242,6 +242,65 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert findings == []
 
 
+def test_detect_python_findings_respects_unchanged___all___exports() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ __all__ = ["public_api"]
+-def helper(value: str = "x") -> str:
++def helper(value: str) -> str:
+     return value
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_detects_multiline_public_function_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,5 +1,5 @@
+ def public_api(
+     name: str,
+-    enabled: bool = True,
++    enabled: bool,
+ ) -> str:
+     return name
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
+    assert any(finding.severity == "MAJOR" for finding in findings)
+
+
+def test_detect_python_findings_detects_multiline_constructor_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,6 +1,6 @@
+ class Config:
+     def __init__(
+         self,
+-        enabled: bool = True,
++        enabled: bool,
+     ) -> None:
+         self.enabled = enabled
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "Config.__init__" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:
     diff_text = """
 diff --git a/src/internal.ts b/src/internal.ts

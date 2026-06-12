@@ -40,6 +40,7 @@ EXPORT_FUNCTION_SIGNATURE_PATTERNS = [
 PYTHON_PUBLIC_DEF_PATTERN = re.compile(
     r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*(?:->\s*([^:]+))?:"
 )
+PYTHON_DEF_START_PATTERN = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 PYTHON_ALL_EXPORT_PATTERN = re.compile(r"__all__\s*=\s*[\[(]([^\])]+)[\])]")
 
@@ -289,16 +290,52 @@ def _is_python_top_level_statement(line: str) -> bool:
     return _python_indent_level(line) == 0
 
 
+def _iter_python_version_source_lines(
+    file_diff: _FileDiff,
+    *,
+    target_prefix: str,
+) -> list[str]:
+    return [
+        line
+        for prefix, line in file_diff.ordered_lines
+        if prefix in {" ", target_prefix}
+    ]
+
+
+def _collect_python_signature_source(lines: list[str], start_index: int) -> tuple[str, int]:
+    collected = [lines[start_index]]
+    paren_depth = lines[start_index].count("(") - lines[start_index].count(")")
+    cursor = start_index + 1
+
+    while cursor < len(lines):
+        if paren_depth <= 0 and collected[-1].rstrip().endswith(":"):
+            break
+        collected.append(lines[cursor])
+        paren_depth += lines[cursor].count("(") - lines[cursor].count(")")
+        cursor += 1
+
+    normalized = " ".join(line.strip() for line in collected)
+    return normalized, cursor
+
+
 def _extract_python_public_names(lines: list[str]) -> set[str]:
     all_exports = _extract_python_all_exports(lines)
     if all_exports:
         return all_exports
 
     exports: set[str] = set()
-    for line in lines:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         if not _is_python_top_level_statement(line):
+            index += 1
             continue
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if def_start:
+            signature_source, index = _collect_python_signature_source(lines, index)
+            def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        else:
+            def_match = None
         if def_match:
             name = def_match.group(1)
             params = _split_top_level_params(def_match.group(2))
@@ -314,6 +351,7 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
             name = class_match.group(1)
             if not name.startswith("_"):
                 exports.add(name)
+        index += 1
 
     return exports
 
@@ -344,6 +382,28 @@ def _iter_python_version_lines(
     ]
 
 
+def _collect_python_signature_block(
+    version_lines: list[tuple[str, bool]],
+    start_index: int,
+) -> tuple[str, bool, int]:
+    collected = [version_lines[start_index][0]]
+    block_is_target = version_lines[start_index][1]
+    paren_depth = collected[0].count("(") - collected[0].count(")")
+    cursor = start_index + 1
+
+    while cursor < len(version_lines):
+        if paren_depth <= 0 and collected[-1].rstrip().endswith(":"):
+            break
+        line, is_target_line = version_lines[cursor]
+        collected.append(line)
+        block_is_target = block_is_target or is_target_line
+        paren_depth += line.count("(") - line.count(")")
+        cursor += 1
+
+    normalized = " ".join(line.strip() for line in collected)
+    return normalized, block_is_target, cursor
+
+
 def _extract_python_signatures(
     file_diff: _FileDiff,
     *,
@@ -351,22 +411,32 @@ def _extract_python_signatures(
 ) -> dict[str, list[_FunctionSignature]]:
     signatures: dict[str, list[_FunctionSignature]] = {}
     current_top_level_class: str | None = None
+    version_lines = _iter_python_version_lines(file_diff, target_prefix=target_prefix)
+    index = 0
 
-    for line, is_target_line in _iter_python_version_lines(file_diff, target_prefix=target_prefix):
+    while index < len(version_lines):
+        line, _is_target_line = version_lines[index]
         is_top_level = _is_python_top_level_statement(line)
         class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
         if class_match and not line.lstrip().startswith("@"):
             class_name = class_match.group(1)
             current_top_level_class = class_name if not class_name.startswith("_") else None
+            index += 1
             continue
 
         if is_top_level and not class_match:
             current_top_level_class = None
 
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
-        if not def_match:
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if not def_start:
+            index += 1
             continue
-        if not is_target_line:
+        signature_source, block_is_target, index = _collect_python_signature_block(
+            version_lines,
+            index,
+        )
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        if not def_match or not block_is_target:
             continue
 
         name = def_match.group(1)
@@ -394,7 +464,7 @@ def _extract_python_signatures(
             name=symbol_name,
             params=params,
             return_type=return_type,
-            source=line,
+            source=signature_source,
         )
         signatures.setdefault(symbol_name, []).append(signature)
 
@@ -891,12 +961,20 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             continue
 
         start_count = len(findings)
-        removed_exports = _extract_python_public_names(file_diff.removed_lines)
-        added_exports = _extract_python_public_names(file_diff.added_lines)
+        removed_exports = _extract_python_public_names(
+            _iter_python_version_source_lines(file_diff, target_prefix="-")
+        )
+        added_exports = _extract_python_public_names(
+            _iter_python_version_source_lines(file_diff, target_prefix="+")
+        )
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
-        removed_classes = _extract_python_classes(file_diff.removed_lines)
-        added_classes = _extract_python_classes(file_diff.added_lines)
+        removed_classes = _extract_python_classes(
+            _iter_python_version_source_lines(file_diff, target_prefix="-")
+        )
+        added_classes = _extract_python_classes(
+            _iter_python_version_source_lines(file_diff, target_prefix="+")
+        )
 
         removed_only = sorted(removed_exports - added_exports)
         added_only = sorted(added_exports - removed_exports)
@@ -973,7 +1051,16 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 )
             )
 
-        shared_symbols = sorted(set(removed_signatures) & set(added_signatures))
+        shared_public_exports = removed_exports & added_exports
+        shared_symbols = sorted(
+            symbol
+            for symbol in (set(removed_signatures) & set(added_signatures))
+            if symbol in shared_public_exports
+            or (
+                symbol.endswith(".__init__")
+                and symbol.rsplit(".", 1)[0] in shared_public_exports
+            )
+        )
         for symbol in shared_symbols:
             old_sigs = removed_signatures.get(symbol, [])
             new_sigs = added_signatures.get(symbol, [])
