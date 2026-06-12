@@ -195,6 +195,53 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert any(finding.rule == "python_requires_floor_raised" for finding in findings)
 
 
+def test_detect_python_findings_keeps_constructor_changes_bound_to_their_own_classes() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,8 +1,8 @@
+ class A:
+-    def __init__(self, value: str):
++    def __init__(self, value: str, extra: str | None = None):
+         self.value = value
+
+ class B:
+-    def __init__(self, count: int = 0):
++    def __init__(self, count: int):
+         self.count = count
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_optional_widening" and "A.__init__" in finding.title
+        for finding in findings
+    )
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "B.__init__" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_ignores_nested_internal_class_changes() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,6 +1,6 @@
+ def outer():
+     class InternalThing:
+-        def __init__(self, value: str):
++        def __init__(self, value: str, strict: bool):
+             self.value = value
+     return InternalThing
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:
     diff_text = """
 diff --git a/src/internal.ts b/src/internal.ts

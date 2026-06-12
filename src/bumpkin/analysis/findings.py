@@ -94,6 +94,7 @@ class _FileDiff:
     removed_lines: list[str]
     added_lines: list[str]
     context_lines: list[str]
+    ordered_lines: list[tuple[str, str]]
     touched_export_markers: bool
 
 
@@ -167,6 +168,7 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
                 removed_lines=[],
                 added_lines=[],
                 context_lines=[],
+                ordered_lines=[],
                 touched_export_markers=False,
             )
             continue
@@ -176,21 +178,24 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
         if raw.startswith(("---", "+++", "@@", "index ")):
             continue
         if raw.startswith("-"):
-            line = raw[1:].strip()
-            if line:
+            line = raw[1:].rstrip()
+            if line.strip():
                 current.removed_lines.append(line)
+                current.ordered_lines.append(("-", line))
                 if "export " in line:
                     current.touched_export_markers = True
         elif raw.startswith("+"):
-            line = raw[1:].strip()
-            if line:
+            line = raw[1:].rstrip()
+            if line.strip():
                 current.added_lines.append(line)
+                current.ordered_lines.append(("+", line))
                 if "export " in line:
                     current.touched_export_markers = True
         elif raw.startswith(" "):
-            line = raw[1:].strip()
-            if line:
+            line = raw[1:].rstrip()
+            if line.strip():
                 current.context_lines.append(line)
+                current.ordered_lines.append((" ", line))
 
     if current is not None:
         file_diffs.append(current)
@@ -206,14 +211,14 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
         if raw.startswith(("---", "+++", "@@", "index ", "diff --git ")):
             continue
         if raw.startswith("-"):
-            line = raw[1:].strip()
-            if line:
+            line = raw[1:].rstrip()
+            if line.strip():
                 removed.append(line)
                 if "export " in line:
                     touched_export = True
         elif raw.startswith("+"):
-            line = raw[1:].strip()
-            if line:
+            line = raw[1:].rstrip()
+            if line.strip():
                 added.append(line)
                 if "export " in line:
                     touched_export = True
@@ -225,6 +230,7 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
             removed_lines=removed,
             added_lines=added,
             context_lines=[],
+            ordered_lines=[*[("-", line) for line in removed], *[("+", line) for line in added]],
             touched_export_markers=touched_export,
         )
     ]
@@ -274,6 +280,15 @@ def _extract_export_signatures(lines: list[str]) -> dict[str, list[_FunctionSign
     return signatures
 
 
+def _python_indent_level(line: str) -> int:
+    expanded = line.expandtabs(8)
+    return len(expanded) - len(expanded.lstrip(" "))
+
+
+def _is_python_top_level_statement(line: str) -> bool:
+    return _python_indent_level(line) == 0
+
+
 def _extract_python_public_names(lines: list[str]) -> set[str]:
     all_exports = _extract_python_all_exports(lines)
     if all_exports:
@@ -281,6 +296,8 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
 
     exports: set[str] = set()
     for line in lines:
+        if not _is_python_top_level_statement(line):
+            continue
         def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
         if def_match:
             name = def_match.group(1)
@@ -304,6 +321,8 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
 def _extract_python_all_exports(lines: list[str]) -> set[str]:
     exports: set[str] = set()
     for line in lines:
+        if not _is_python_top_level_statement(line):
+            continue
         match = PYTHON_ALL_EXPORT_PATTERN.search(line)
         if not match:
             continue
@@ -312,21 +331,37 @@ def _extract_python_all_exports(lines: list[str]) -> set[str]:
     return exports
 
 
-def _extract_python_signatures(
-    lines: list[str],
+def _iter_python_version_lines(
+    file_diff: _FileDiff,
     *,
-    context_lines: list[str] | None = None,
+    target_prefix: str,
+) -> list[tuple[str, bool]]:
+    active_prefixes = {" ", target_prefix}
+    return [
+        (line, prefix == target_prefix)
+        for prefix, line in file_diff.ordered_lines
+        if prefix in active_prefixes
+    ]
+
+
+def _extract_python_signatures(
+    file_diff: _FileDiff,
+    *,
+    target_prefix: str,
 ) -> dict[str, list[_FunctionSignature]]:
     signatures: dict[str, list[_FunctionSignature]] = {}
-    current_class: str | None = None
+    current_top_level_class: str | None = None
 
-    scan_lines = [(line, False) for line in context_lines or []] + [(line, True) for line in lines]
-    for line, is_target_line in scan_lines:
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if class_match:
+    for line, is_target_line in _iter_python_version_lines(file_diff, target_prefix=target_prefix):
+        is_top_level = _is_python_top_level_statement(line)
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
+        if class_match and not line.lstrip().startswith("@"):
             class_name = class_match.group(1)
-            current_class = class_name if not class_name.startswith("_") else None
+            current_top_level_class = class_name if not class_name.startswith("_") else None
             continue
+
+        if is_top_level and not class_match:
+            current_top_level_class = None
 
         def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
         if not def_match:
@@ -338,10 +373,18 @@ def _extract_python_signatures(
         params = re.sub(r"\s+", "", def_match.group(2))
         return_type = _normalize_type(def_match.group(3))
         param_list = _split_top_level_params(def_match.group(2))
-        if name == "__init__" and current_class and param_list and param_list[0].strip() == "self":
-            symbol_name = f"{current_class}.__init__"
+        if (
+            name == "__init__"
+            and current_top_level_class
+            and param_list
+            and param_list[0].strip() == "self"
+            and _python_indent_level(line) > 0
+        ):
+            symbol_name = f"{current_top_level_class}.__init__"
         else:
             if name.startswith("_"):
+                continue
+            if not is_top_level:
                 continue
             if param_list and param_list[0].strip() in {"self", "cls"}:
                 continue
@@ -361,6 +404,8 @@ def _extract_python_signatures(
 def _extract_python_classes(lines: list[str]) -> set[str]:
     classes: set[str] = set()
     for line in lines:
+        if not _is_python_top_level_statement(line):
+            continue
         match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if not match:
             continue
@@ -848,14 +893,8 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         start_count = len(findings)
         removed_exports = _extract_python_public_names(file_diff.removed_lines)
         added_exports = _extract_python_public_names(file_diff.added_lines)
-        removed_signatures = _extract_python_signatures(
-            file_diff.removed_lines,
-            context_lines=file_diff.context_lines,
-        )
-        added_signatures = _extract_python_signatures(
-            file_diff.added_lines,
-            context_lines=file_diff.context_lines,
-        )
+        removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
+        added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
         removed_classes = _extract_python_classes(file_diff.removed_lines)
         added_classes = _extract_python_classes(file_diff.added_lines)
 
