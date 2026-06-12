@@ -21,7 +21,7 @@ venv/
 artifacts/
 
 # Docs
-docs/
+docs/*
 *.md
 !README.md
 !CHANGELOG.md

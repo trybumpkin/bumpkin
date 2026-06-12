@@ -69,6 +69,17 @@ def _coerce_int(value: object, *, field_name: str) -> int:
     raise RuntimeError(f"Release candidate field '{field_name}' must be an integer.")
 
 
+def _coerce_string(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _coerce_optional_string(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    return normalized or None
+
+
 @dataclass(frozen=True, slots=True)
 class ReleaseScopedPullRequest:
     repository: str
@@ -267,17 +278,17 @@ def _deserialize_pull_request(payload: object) -> ReleaseScopedPullRequest:
         raise RuntimeError("Release candidate payload contains an invalid pull request entry.")
     payload_map = cast("dict[str, object]", payload)
     return ReleaseScopedPullRequest(
-        repository=str(payload_map.get("repository", "")).strip(),
+        repository=_coerce_string(payload_map.get("repository", "")),
         number=_coerce_int(payload_map.get("number", 0), field_name="number"),
-        title=str(payload_map.get("title", "")).strip(),
-        url=str(payload_map.get("url", "")).strip(),
-        author_login=str(payload_map.get("author_login", "")).strip() or None,
-        merged_at=_parse_iso8601(str(payload_map.get("merged_at", "")).strip()),
-        merge_commit_sha=str(payload_map.get("merge_commit_sha", "")).strip(),
-        base_ref=str(payload_map.get("base_ref", "")).strip() or None,
-        base_sha=str(payload_map.get("base_sha", "")).strip() or None,
-        head_ref=str(payload_map.get("head_ref", "")).strip() or None,
-        head_sha=str(payload_map.get("head_sha", "")).strip() or None,
+        title=_coerce_string(payload_map.get("title", "")),
+        url=_coerce_string(payload_map.get("url", "")),
+        author_login=_coerce_optional_string(payload_map.get("author_login", "")),
+        merged_at=_parse_iso8601(_coerce_string(payload_map.get("merged_at", ""))),
+        merge_commit_sha=_coerce_string(payload_map.get("merge_commit_sha", "")),
+        base_ref=_coerce_optional_string(payload_map.get("base_ref", "")),
+        base_sha=_coerce_optional_string(payload_map.get("base_sha", "")),
+        head_ref=_coerce_optional_string(payload_map.get("head_ref", "")),
+        head_sha=_coerce_optional_string(payload_map.get("head_sha", "")),
         labels=tuple(
             str(item).strip()
             for item in cast("list[object]", payload_map.get("labels", []))
@@ -405,21 +416,21 @@ def _deserialize_release_candidate(payload: object) -> ReleaseCandidate:
         format_version=_coerce_int(
             payload_map.get("format_version", 0), field_name="format_version"
         ),
-        source_operation=str(payload_map.get("source_operation", "")).strip(),
-        source_run_id=str(payload_map.get("source_run_id", "")).strip() or None,
-        repository=str(payload_map.get("repository", "")).strip(),
-        target_ref=str(payload_map.get("target_ref", "")).strip(),
-        target_sha=str(payload_map.get("target_sha", "")).strip(),
-        base_tag_input=str(payload_map.get("base_tag_input", "")).strip(),
-        previous_tag=str(payload_map.get("previous_tag", "")).strip() or None,
-        next_tag=str(payload_map.get("next_tag", "")).strip() or None,
-        release_label=str(payload_map.get("release_label", "")).strip() or None,
-        status=str(payload_map.get("status", "")).strip(),
+        source_operation=_coerce_string(payload_map.get("source_operation", "")),
+        source_run_id=_coerce_optional_string(payload_map.get("source_run_id", "")),
+        repository=_coerce_string(payload_map.get("repository", "")),
+        target_ref=_coerce_string(payload_map.get("target_ref", "")),
+        target_sha=_coerce_string(payload_map.get("target_sha", "")),
+        base_tag_input=_coerce_string(payload_map.get("base_tag_input", "")),
+        previous_tag=_coerce_optional_string(payload_map.get("previous_tag", "")),
+        next_tag=_coerce_optional_string(payload_map.get("next_tag", "")),
+        release_label=_coerce_optional_string(payload_map.get("release_label", "")),
+        status=_coerce_string(payload_map.get("status", "")),
         preview_notes=str(payload_map.get("preview_notes", "")),
         published_release_body=str(payload_map.get("published_release_body", "")),
         notes=tuple(str(note).strip() for note in notes_raw if str(note).strip()),
         pull_requests=tuple(_deserialize_pull_request(item) for item in pull_requests_raw),
-        fingerprint=str(payload_map.get("fingerprint", "")).strip(),
+        fingerprint=_coerce_string(payload_map.get("fingerprint", "")),
     )
     if candidate.format_version != _RELEASE_CANDIDATE_FORMAT_VERSION:
         raise RuntimeError(

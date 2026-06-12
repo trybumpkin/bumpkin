@@ -371,7 +371,8 @@ def test_prepare_release_plan_returns_needs_review_for_unresolved_batch(monkeypa
     assert plan.next_tag is None
     assert plan.release_label is None
     assert "## Public release notes" in plan.preview_notes
-    assert "## Needs Review" in plan.preview_notes
+    assert "### Needs Review" in plan.preview_notes
+    assert "## Versioning context" not in plan.preview_notes
     assert "Refactor boundary behavior" in plan.preview_notes
     assert plan.published_release_body == ""
 

@@ -7,7 +7,12 @@ import yaml
 
 def test_composite_action_exposes_release_operations_and_outputs() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    action = yaml.safe_load((repo_root / "action.yml").read_text(encoding="utf-8"))
+    action_text = (repo_root / "action.yml").read_text(encoding="utf-8")
+    action = yaml.safe_load(action_text)
+
+    assert action_text.splitlines()[0] == (
+        "# yaml-language-server: $schema=https://json.schemastore.org/github-action.json"
+    )
 
     inputs = action["inputs"]
     assert inputs["operation"]["default"] == "pr_recommendation"
@@ -36,7 +41,7 @@ def test_composite_action_exposes_release_operations_and_outputs() -> None:
     assert "tag_url" in outputs
 
 
-def test_example_release_workflow_uses_release_scoped_operation() -> None:
+def test_source_repo_release_workflow_uses_local_action() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load(
         (repo_root / ".github" / "workflows" / "bumpkin.yml").read_text(encoding="utf-8")
@@ -58,6 +63,7 @@ def test_example_release_workflow_uses_release_scoped_operation() -> None:
     release_job = workflow["jobs"]["release"]
     steps = release_job["steps"]
     bumpkin_step = next(step for step in steps if step.get("id") == "bumpkin")
+    assert bumpkin_step["uses"] == "./"
     assert bumpkin_step["with"]["operation"] == "${{ inputs.operation }}"
     assert bumpkin_step["with"]["preview_run_id"] == "${{ inputs.preview_run_id }}"
     assert bumpkin_step["with"]["model"] == "${{ secrets.BUMPKIN_MODEL }}"
@@ -65,6 +71,8 @@ def test_example_release_workflow_uses_release_scoped_operation() -> None:
     assert bumpkin_step["with"]["models_token"] == "${{ secrets.MODELS_TOKEN }}"  # noqa: S105
     assert "provider" not in bumpkin_step["with"]
     assert any(step.get("name") == "Upload release candidate artifact" for step in steps)
+    assert not any(step.get("name") == "Validate preview output" for step in steps)
+    assert not any(step.get("name") == "Validate published release output" for step in steps)
 
 
 def test_action_runtime_and_ci_use_separate_requirements_files() -> None:

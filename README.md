@@ -2,7 +2,9 @@
 
 ![Bumpkin banner](assets/hero.svg)
 
-Bumpkin is a release assistant that analyzes merged PRs, determines version bumps, and writes release notes - no commit conventions required.
+Bumpkin is a GitHub Action that turns merged PR batches into a reviewed release candidate with a proposed version bump and publishable release notes.
+
+It is built for teams that want release automation without depending on perfect commit conventions.
 
 ## Demo
 
@@ -18,9 +20,16 @@ Bumpkin is a release assistant that analyzes merged PRs, determines version bump
 
 1. finds the previous tag
 2. scans merged PRs since that tag
-3. determines the next version or `NO_BUMP`
-4. writes a maintainer preview and public release notes for the batch
-5. optionally publishes the tag and GitHub Release
+3. proposes the next version or `NO_BUMP`
+4. builds a maintainer briefing plus a public changelog
+5. publishes only the reviewed public release when you choose `release_publish`
+
+## Who it is for
+
+- teams publishing GitHub Releases from merged PRs
+- squash-merge or mixed-merge workflows
+- repos with inconsistent commit discipline
+- maintainers who want review before publish
 
 ## Setup
 
@@ -46,6 +55,14 @@ MODELS_TOKEN=your_provider_token
 BUMPKIN_MODEL=gemini-2.5-flash
 BUMPKIN_MODELS_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/
 ```
+
+## First run checklist
+
+- add `MODELS_TOKEN`, `BUMPKIN_MODEL`, and `BUMPKIN_MODELS_ENDPOINT`
+- keep `actions: read`, `contents: write`, and `pull-requests: read`
+- run `release_preview` first
+- review the maintainer briefing, candidate artifact, and summary
+- run `release_publish` only after the preview looks right
 
 ## Quickstart
 
@@ -122,12 +139,18 @@ For each release run, Bumpkin returns:
 - a release candidate artifact that `release_publish` can verify and reuse
 - a public release body that only contains changelog sections when a release is published
 
-## Release modes
+## Release workflow
 
 - `release_preview` builds a maintainer briefing plus a release candidate artifact without publishing.
 - `release_publish` verifies a saved preview candidate and then creates the tag and GitHub Release from the precomputed public changelog.
 - `NO_BUMP` means no release is needed.
 - `needs_review` means the batch should be reviewed before publishing.
+
+## Why the split matters
+
+- maintainers review the release decision before anything ships
+- publish reuses the saved candidate instead of asking the model again
+- public releases stay changelog-focused and do not leak maintainer rationale
 
 ## Maintainer flow
 

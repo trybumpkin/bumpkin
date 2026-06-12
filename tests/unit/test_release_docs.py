@@ -8,8 +8,10 @@ def test_readme_frames_release_scoped_flow_as_primary_story() -> None:
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
 
     assert "assets/hero.svg" in readme
-    assert "release assistant" in readme
+    assert "GitHub Action that turns merged PR batches into a reviewed release candidate" in readme
     assert "GitHub Action" in readme
+    assert "Who it is for" in readme
+    assert "First run checklist" in readme
     assert "run-name:" in readme
     assert "operation: ${{ inputs.operation }}" in readme
     assert "release_preview" in readme
@@ -30,13 +32,18 @@ def test_readme_frames_release_scoped_flow_as_primary_story() -> None:
 def test_internal_markdown_is_gitignored() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     gitignore = (repo_root / ".gitignore").read_text(encoding="utf-8")
+    lines = set(gitignore.splitlines())
 
+    assert "docs/*" in gitignore
     assert "*.md" in gitignore
     assert "!README.md" in gitignore
     assert "!CHANGELOG.md" in gitignore
     assert "!SECURITY.md" in gitignore
     assert "!ROADMAP.md" in gitignore
     assert "!CONTRIBUTING.md" in gitignore
+    assert "!docs/product-model-plan.md" not in gitignore
+    assert "!docs/release-flow-plan.md" not in gitignore
+    assert "!docs/" not in lines
 
 
 def test_env_example_marks_app_runtime_as_optional() -> None:
