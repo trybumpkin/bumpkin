@@ -353,6 +353,101 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any(finding.severity == "MAJOR" for finding in findings)
 
 
+def test_detect_python_findings_respects_explicit_empty___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,2 @@
+ __all__ = []
+-def helper() -> str:
+-    return "x"
++pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_respects_private_only___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,2 @@
+ __all__ = ["_internal"]
+-def helper() -> str:
+-    return "x"
++pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_comment_only_class_mentions() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-# class LegacyApi handles old clients
++# class ModernApi handles old clients
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_docstring_class_mentions() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-\"\"\"Compatibility note: class LegacyApi is gone.\"\"\"
++\"\"\"Compatibility note: class ModernApi is gone.\"\"\"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_filters_class_fallback_through___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,7 @@
+ __all__ = ["public_api"]
++
++class InternalHelper:
++    pass
+ def public_api() -> str:
+     return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_filters_removed_class_fallback_through___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,7 +1,4 @@
+ __all__ = ["public_api"]
+-class InternalHelper:
+-    pass
+ def public_api() -> str:
+     return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:
     diff_text = """
 diff --git a/src/internal.ts b/src/internal.ts

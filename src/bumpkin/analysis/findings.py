@@ -41,7 +41,7 @@ PYTHON_PUBLIC_DEF_PATTERN = re.compile(
     r"\b(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*(?:->\s*([^:]+))?:"
 )
 PYTHON_DEF_START_PATTERN = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*=\s*")
 
 
@@ -344,9 +344,28 @@ def _collect_python_all_assignment(lines: list[str], start_index: int) -> tuple[
     return normalized, cursor
 
 
+def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
+    exports: set[str] = set()
+    has_explicit_all = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not PYTHON_ALL_EXPORT_START_PATTERN.search(line):
+            index += 1
+            continue
+        has_explicit_all = True
+        assignment_source, index = _collect_python_all_assignment(lines, index)
+        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", assignment_source)
+        exports.update(member for member in members if not member.startswith("_"))
+    return has_explicit_all, exports
+
+
 def _extract_python_public_names(lines: list[str]) -> set[str]:
-    all_exports = _extract_python_all_exports(lines)
-    if all_exports:
+    has_explicit_all, all_exports = _extract_python_all_contract(lines)
+    if has_explicit_all:
         return all_exports
 
     exports: set[str] = set()
@@ -383,20 +402,7 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
 
 
 def _extract_python_all_exports(lines: list[str]) -> set[str]:
-    exports: set[str] = set()
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if not _is_python_top_level_statement(line):
-            index += 1
-            continue
-        if not PYTHON_ALL_EXPORT_START_PATTERN.search(line):
-            index += 1
-            continue
-        assignment_source, index = _collect_python_all_assignment(lines, index)
-        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", assignment_source)
-        exports.update(member for member in members if not member.startswith("_"))
-    return exports
+    return _extract_python_all_contract(lines)[1]
 
 
 def _iter_python_version_lines(
@@ -501,7 +507,12 @@ def _extract_python_signatures(
     return signatures
 
 
-def _extract_python_classes(lines: list[str]) -> set[str]:
+def _extract_python_classes(
+    lines: list[str],
+    *,
+    has_explicit_all: bool = False,
+    explicit_exports: set[str] | None = None,
+) -> set[str]:
     classes: set[str] = set()
     for line in lines:
         if not _is_python_top_level_statement(line):
@@ -510,6 +521,10 @@ def _extract_python_classes(lines: list[str]) -> set[str]:
         if not match:
             continue
         name = match.group(1)
+        if name.startswith("_"):
+            continue
+        if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
+            continue
         if not name.startswith("_"):
             classes.add(name)
     return classes
@@ -991,19 +1006,35 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             continue
 
         start_count = len(findings)
-        removed_exports = _extract_python_public_names(
-            _iter_python_version_source_lines(file_diff, target_prefix="-")
+        removed_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="-")
+        added_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="+")
+        removed_has_explicit_all, removed_all_exports = _extract_python_all_contract(
+            removed_version_lines
         )
-        added_exports = _extract_python_public_names(
-            _iter_python_version_source_lines(file_diff, target_prefix="+")
+        added_has_explicit_all, added_all_exports = _extract_python_all_contract(
+            added_version_lines
+        )
+        removed_exports = (
+            removed_all_exports
+            if removed_has_explicit_all
+            else _extract_python_public_names(removed_version_lines)
+        )
+        added_exports = (
+            added_all_exports
+            if added_has_explicit_all
+            else _extract_python_public_names(added_version_lines)
         )
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
         removed_classes = _extract_python_classes(
-            _iter_python_version_source_lines(file_diff, target_prefix="-")
+            removed_version_lines,
+            has_explicit_all=removed_has_explicit_all,
+            explicit_exports=removed_all_exports,
         )
         added_classes = _extract_python_classes(
-            _iter_python_version_source_lines(file_diff, target_prefix="+")
+            added_version_lines,
+            has_explicit_all=added_has_explicit_all,
+            explicit_exports=added_all_exports,
         )
 
         removed_only = sorted(removed_exports - added_exports)
