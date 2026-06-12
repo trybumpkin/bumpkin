@@ -38,11 +38,11 @@ EXPORT_FUNCTION_SIGNATURE_PATTERNS = [
     ),
 ]
 PYTHON_PUBLIC_DEF_PATTERN = re.compile(
-    r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*(?:->\s*([^:]+))?:"
+    r"\b(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*(?:->\s*([^:]+))?:"
 )
-PYTHON_DEF_START_PATTERN = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+PYTHON_DEF_START_PATTERN = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b")
-PYTHON_ALL_EXPORT_PATTERN = re.compile(r"__all__\s*=\s*[\[(]([^\])]+)[\])]")
+PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*=\s*")
 
 
 @dataclass(frozen=True)
@@ -318,6 +318,32 @@ def _collect_python_signature_source(lines: list[str], start_index: int) -> tupl
     return normalized, cursor
 
 
+def _collect_python_all_assignment(lines: list[str], start_index: int) -> tuple[str, int]:
+    collected = [lines[start_index]]
+    bracket_depth = (
+        lines[start_index].count("[")
+        + lines[start_index].count("(")
+        - lines[start_index].count("]")
+        - lines[start_index].count(")")
+    )
+    cursor = start_index + 1
+
+    while cursor < len(lines):
+        if bracket_depth <= 0:
+            break
+        collected.append(lines[cursor])
+        bracket_depth += (
+            lines[cursor].count("[")
+            + lines[cursor].count("(")
+            - lines[cursor].count("]")
+            - lines[cursor].count(")")
+        )
+        cursor += 1
+
+    normalized = " ".join(line.strip() for line in collected)
+    return normalized, cursor
+
+
 def _extract_python_public_names(lines: list[str]) -> set[str]:
     all_exports = _extract_python_all_exports(lines)
     if all_exports:
@@ -358,13 +384,17 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
 
 def _extract_python_all_exports(lines: list[str]) -> set[str]:
     exports: set[str] = set()
-    for line in lines:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
         if not _is_python_top_level_statement(line):
+            index += 1
             continue
-        match = PYTHON_ALL_EXPORT_PATTERN.search(line)
-        if not match:
+        if not PYTHON_ALL_EXPORT_START_PATTERN.search(line):
+            index += 1
             continue
-        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", match.group(1))
+        assignment_source, index = _collect_python_all_assignment(lines, index)
+        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", assignment_source)
         exports.update(member for member in members if not member.startswith("_"))
     return exports
 

@@ -301,6 +301,58 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_async_public_function_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+-async def fetch_user(user_id: str, expand: bool = False) -> dict:
++async def fetch_user(user_id: str, expand: bool) -> dict:
+     return {"id": user_id}
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
+    assert any("fetch_user" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_async_public_function_removal() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,1 @@
+-async def fetch_user(user_id: str) -> dict:
+-    return {"id": user_id}
++pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any(finding.severity == "MAJOR" for finding in findings)
+
+
+def test_detect_python_findings_respects_multiline___all___exports() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,7 +1,7 @@
+ __all__ = [
+-    "old_api",
++    "new_api",
+ ]
+-def old_api() -> str:
++def new_api() -> str:
+     return "old"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_renamed" for finding in findings)
+    assert any(finding.severity == "MAJOR" for finding in findings)
+
+
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:
     diff_text = """
 diff --git a/src/internal.ts b/src/internal.ts
