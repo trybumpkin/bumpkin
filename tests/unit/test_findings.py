@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from findings import (
     Finding,
     aggregate_findings,
@@ -510,6 +512,67 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        '__all__ = ["public_api"]\n\n'
+        'def helper(value: str) -> str:\n'
+        '    return value\n\n'
+        'def public_api() -> str:\n'
+        '    return "ok"\n',
+        encoding="utf-8",
+    )
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -20,3 +20,3 @@
+-def helper(value: str = "x") -> str:
++def helper(value: str) -> str:
+     return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_infers_constructor_class_from_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        'class Example:\n'
+        '    """docstring"""\n'
+        '\n'
+        '    flag = True\n'
+        '\n'
+        '    def __init__(self, count: int):\n'
+        '        self.count = count\n',
+        encoding="utf-8",
+    )
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -10,4 +10,4 @@
+-    def __init__(self, count: int = 0):
++    def __init__(self, count: int):
+         self.count = count
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
+    assert any("Example.__init__" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_top_level_reexport_rename_without___all__() -> None:
     diff_text = """
 diff --git a/pkg/__init__.py b/pkg/__init__.py
@@ -587,6 +650,20 @@ diff --git a/pkg/api.py b/pkg/api.py
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("B" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_ignores_commented_requires_python_examples() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+-# requires-python = ">=3.9"
++# requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
 
 
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:

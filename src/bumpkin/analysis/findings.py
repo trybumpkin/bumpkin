@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 SEVERITY_ORDER = {
@@ -17,7 +18,7 @@ JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"
 PYTHON_EXTENSIONS = (".py",)
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
-    r"""requires-python\s*=\s*["']>=\s*(\d+(?:\.\d+)*)[^"']*["']""",
+    r"""^\s*requires-python\s*=\s*["']>=\s*(\d+(?:\.\d+)*)[^"']*["']""",
     re.IGNORECASE,
 )
 
@@ -166,6 +167,16 @@ def _is_root_pyproject(path: str) -> bool:
 def _is_package_init(path: str) -> bool:
     normalized = path.strip().replace("\\", "/").lower()
     return normalized.endswith("/__init__.py") or normalized == "__init__.py"
+
+
+def _read_workspace_python_lines(path: str) -> list[str] | None:
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = Path.cwd() / resolved
+    try:
+        return resolved.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
 
 
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
@@ -408,6 +419,72 @@ def _extract_python_imported_names(statement_source: str) -> set[str]:
     return exports
 
 
+def _workspace_python_all_contract(path: str) -> tuple[bool, set[str]] | None:
+    lines = _read_workspace_python_lines(path)
+    if lines is None:
+        return None
+    return _extract_python_all_contract(lines)
+
+
+def _workspace_python_public_names(path: str) -> set[str] | None:
+    lines = _read_workspace_python_lines(path)
+    if lines is None:
+        return None
+    return _extract_python_public_names(lines, path=path)
+
+
+def _infer_python_constructor_class_from_workspace(
+    path: str,
+    *,
+    body_anchor: str | None,
+) -> str | None:
+    lines = _read_workspace_python_lines(path)
+    if lines is None:
+        return None
+
+    candidates: list[str] = []
+    current_top_level_class: str | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        is_top_level = _is_python_top_level_statement(line)
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
+        if class_match and not line.lstrip().startswith("@"):
+            class_name = class_match.group(1)
+            current_top_level_class = class_name if not class_name.startswith("_") else None
+            index += 1
+            continue
+        if is_top_level and not class_match and line.strip():
+            current_top_level_class = None
+
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if not def_start:
+            index += 1
+            continue
+
+        signature_source, next_index = _collect_python_signature_source(lines, index)
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        if (
+            current_top_level_class
+            and def_match
+            and def_match.group(1) == "__init__"
+            and _python_indent_level(line) > 0
+        ):
+            next_body_line: str | None = None
+            if next_index < len(lines):
+                candidate = lines[next_index].strip()
+                if candidate:
+                    next_body_line = candidate
+            if body_anchor is None or next_body_line == body_anchor:
+                candidates.append(current_top_level_class)
+        index = next_index
+
+    unique_candidates = sorted(set(candidates))
+    if len(unique_candidates) == 1:
+        return unique_candidates[0]
+    return None
+
+
 def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
     exports: set[str] = set()
     has_explicit_all = False
@@ -557,7 +634,7 @@ def _extract_python_signatures(
             index += 1
             continue
 
-        if is_top_level and not class_match:
+        if is_top_level and not class_match and line.strip():
             current_top_level_class = None
 
         def_start = PYTHON_DEF_START_PATTERN.search(line)
@@ -576,14 +653,25 @@ def _extract_python_signatures(
         params = re.sub(r"\s+", "", def_match.group(2))
         return_type = _normalize_type(def_match.group(3))
         param_list = _split_top_level_params(def_match.group(2))
+        next_body_line: str | None = None
+        if index < len(version_lines):
+            candidate = version_lines[index][0]
+            if _python_indent_level(candidate) > _python_indent_level(line) and candidate.strip():
+                next_body_line = candidate.strip()
         if (
             name == "__init__"
-            and current_top_level_class
             and param_list
             and param_list[0].strip() == "self"
             and _python_indent_level(line) > 0
         ):
-            symbol_name = f"{current_top_level_class}.__init__"
+            inferred_class = current_top_level_class or _infer_python_constructor_class_from_workspace(
+                file_diff.path,
+                body_anchor=next_body_line,
+            )
+            if inferred_class:
+                symbol_name = f"{inferred_class}.__init__"
+            else:
+                continue
         else:
             if name.startswith("_"):
                 continue
@@ -1111,6 +1199,17 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         added_has_explicit_all, added_all_exports = _extract_python_all_contract(
             added_version_lines
         )
+        workspace_all_contract = _workspace_python_all_contract(file_diff.path)
+        if (
+            workspace_all_contract is not None
+            and not removed_has_explicit_all
+            and not added_has_explicit_all
+            and workspace_all_contract[0]
+        ):
+            removed_has_explicit_all = True
+            added_has_explicit_all = True
+            removed_all_exports = set(workspace_all_contract[1])
+            added_all_exports = set(workspace_all_contract[1])
         removed_exports = (
             removed_all_exports
             if removed_has_explicit_all
@@ -1121,6 +1220,12 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             if added_has_explicit_all
             else _extract_python_public_names(added_version_lines, path=file_diff.path)
         )
+        workspace_public_names = _workspace_python_public_names(file_diff.path)
+        if workspace_public_names is not None:
+            if not removed_has_explicit_all:
+                removed_exports = removed_exports | workspace_public_names
+            if not added_has_explicit_all:
+                added_exports = added_exports | workspace_public_names
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
         removed_classes = _extract_python_classes(
