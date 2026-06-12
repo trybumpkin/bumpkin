@@ -527,6 +527,36 @@ diff --git a/pkg/__init__.py b/pkg/__init__.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_ignores_ordinary_top_level_import_swaps() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,3 @@
+-import os
++import pathlib
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_regular_module_typing_import_churn() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,3 @@
+-from typing import Any
++from typing import Any, Literal
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py

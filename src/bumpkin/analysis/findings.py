@@ -47,7 +47,7 @@ PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*(\+?=)\s*")
 PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
 )
-PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
+PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*from\b.+\bimport\b")
 
 
 @dataclass(frozen=True)
@@ -161,6 +161,11 @@ def _is_python_path(path: str) -> bool:
 def _is_root_pyproject(path: str) -> bool:
     normalized = path.strip().replace("\\", "/").lower()
     return normalized == "pyproject.toml"
+
+
+def _is_package_init(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    return normalized.endswith("/__init__.py") or normalized == "__init__.py"
 
 
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
@@ -393,12 +398,7 @@ def _extract_python_imported_names(statement_source: str) -> set[str]:
 
     statement = module.body[0]
     exports: set[str] = set()
-    if isinstance(statement, ast.Import):
-        for alias in statement.names:
-            exported_name = alias.asname or alias.name.split(".", 1)[0]
-            if not exported_name.startswith("_"):
-                exports.add(exported_name)
-    elif isinstance(statement, ast.ImportFrom):
+    if isinstance(statement, ast.ImportFrom) and statement.level > 0:
         for alias in statement.names:
             if alias.name == "*":
                 continue
@@ -446,12 +446,13 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
     return has_explicit_all, exports
 
 
-def _extract_python_public_names(lines: list[str]) -> set[str]:
+def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
     has_explicit_all, all_exports = _extract_python_all_contract(lines)
     if has_explicit_all:
         return all_exports
 
     exports: set[str] = set()
+    allow_reexport_imports = _is_package_init(path)
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -482,7 +483,7 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
             index += 1
             continue
 
-        if PYTHON_IMPORT_START_PATTERN.search(line):
+        if allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line):
             statement_source, index = _collect_python_import_statement(lines, index)
             exports.update(_extract_python_imported_names(statement_source))
             continue
@@ -1113,12 +1114,12 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         removed_exports = (
             removed_all_exports
             if removed_has_explicit_all
-            else _extract_python_public_names(removed_version_lines)
+            else _extract_python_public_names(removed_version_lines, path=file_diff.path)
         )
         added_exports = (
             added_all_exports
             if added_has_explicit_all
-            else _extract_python_public_names(added_version_lines)
+            else _extract_python_public_names(added_version_lines, path=file_diff.path)
         )
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
