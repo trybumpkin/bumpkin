@@ -182,6 +182,20 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_ignores_nested_pyproject_floor_raise() -> None:
+    diff_text = """
+diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pyproject.toml
+--- a/packages/internal-tool/pyproject.toml
++++ b/packages/internal-tool/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_semver_findings_combines_language_detectors() -> None:
     diff_text = """
 diff --git a/pyproject.toml b/pyproject.toml
@@ -446,6 +460,54 @@ diff --git a/pkg/api.py b/pkg/api.py
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_detects_public_constant_removal_without___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,1 @@
+-PUBLIC_TIMEOUT = 30
+-
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("PUBLIC_TIMEOUT" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_public_type_alias_removal_without___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,1 @@
+-UserId = str
+-
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("UserId" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_public_constant_addition_without___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,3 @@
++DEFAULT_TIMEOUT = 30
++
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:

@@ -43,6 +43,9 @@ PYTHON_PUBLIC_DEF_PATTERN = re.compile(
 PYTHON_DEF_START_PATTERN = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*=\s*")
+PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
+)
 
 
 @dataclass(frozen=True)
@@ -151,6 +154,11 @@ def _is_js_ts_path(path: str) -> bool:
 def _is_python_path(path: str) -> bool:
     normalized = path.strip().lower()
     return normalized.endswith(PYTHON_EXTENSIONS)
+
+
+def _is_root_pyproject(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    return normalized == "pyproject.toml"
 
 
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
@@ -395,6 +403,14 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
         if class_match:
             name = class_match.group(1)
             if not name.startswith("_"):
+                exports.add(name)
+            index += 1
+            continue
+
+        assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
+        if assignment_match:
+            name = assignment_match.group(1)
+            if not name.startswith("_") and name != "__all__":
                 exports.add(name)
         index += 1
 
@@ -969,7 +985,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         removed_floor = _extract_requires_python_floor(file_diff.removed_lines)
         added_floor = _extract_requires_python_floor(file_diff.added_lines)
         if (
-            file_diff.path.endswith("pyproject.toml")
+            _is_root_pyproject(file_diff.path)
             and removed_floor is not None
             and added_floor is not None
             and added_floor > removed_floor
