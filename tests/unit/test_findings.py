@@ -510,6 +510,55 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_top_level_reexport_rename_without___all__() -> None:
+    diff_text = """
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+--- a/pkg/__init__.py
++++ b/pkg/__init__.py
+@@ -1,1 +1,1 @@
+-from .api import Client
++from .api import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_respects_incremental___all___additions() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,4 @@
+ __all__ = ["A"]
++__all__ += ["B"]
+ def A() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("B" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_respects_incremental___all___removals() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,3 @@
+ __all__ = ["A"]
+-__all__ += ["B"]
+ def A() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("B" in finding.title for finding in findings)
+
+
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:
     diff_text = """
 diff --git a/src/internal.ts b/src/internal.ts

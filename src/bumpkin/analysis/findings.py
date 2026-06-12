@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -42,10 +43,11 @@ PYTHON_PUBLIC_DEF_PATTERN = re.compile(
 )
 PYTHON_DEF_START_PATTERN = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b")
-PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*=\s*")
+PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*(\+?=)\s*")
 PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
 )
+PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
 
 
 @dataclass(frozen=True)
@@ -352,6 +354,60 @@ def _collect_python_all_assignment(lines: list[str], start_index: int) -> tuple[
     return normalized, cursor
 
 
+def _collect_python_import_statement(lines: list[str], start_index: int) -> tuple[str, int]:
+    collected = [lines[start_index]]
+    paren_depth = lines[start_index].count("(") - lines[start_index].count(")")
+    cursor = start_index + 1
+
+    while cursor < len(lines):
+        if paren_depth <= 0 and not collected[-1].rstrip().endswith("\\"):
+            break
+        collected.append(lines[cursor])
+        paren_depth += lines[cursor].count("(") - lines[cursor].count(")")
+        cursor += 1
+
+    normalized = " ".join(line.strip() for line in collected)
+    return normalized, cursor
+
+
+def _extract_python_string_names(node: ast.AST | None) -> set[str]:
+    if node is None:
+        return set()
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        exports: set[str] = set()
+        for element in node.elts:
+            exports.update(_extract_python_string_names(element))
+        return exports
+    return set()
+
+
+def _extract_python_imported_names(statement_source: str) -> set[str]:
+    try:
+        module = ast.parse(statement_source)
+    except SyntaxError:
+        return set()
+    if len(module.body) != 1:
+        return set()
+
+    statement = module.body[0]
+    exports: set[str] = set()
+    if isinstance(statement, ast.Import):
+        for alias in statement.names:
+            exported_name = alias.asname or alias.name.split(".", 1)[0]
+            if not exported_name.startswith("_"):
+                exports.add(exported_name)
+    elif isinstance(statement, ast.ImportFrom):
+        for alias in statement.names:
+            if alias.name == "*":
+                continue
+            exported_name = alias.asname or alias.name
+            if not exported_name.startswith("_"):
+                exports.add(exported_name)
+    return exports
+
+
 def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
     exports: set[str] = set()
     has_explicit_all = False
@@ -361,13 +417,32 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
         if not _is_python_top_level_statement(line):
             index += 1
             continue
-        if not PYTHON_ALL_EXPORT_START_PATTERN.search(line):
+        match = PYTHON_ALL_EXPORT_START_PATTERN.search(line)
+        if not match:
             index += 1
             continue
         has_explicit_all = True
         assignment_source, index = _collect_python_all_assignment(lines, index)
-        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", assignment_source)
-        exports.update(member for member in members if not member.startswith("_"))
+        operator = match.group(1)
+        try:
+            module = ast.parse(assignment_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1:
+            continue
+        statement = module.body[0]
+        if isinstance(statement, ast.Assign):
+            values = _extract_python_string_names(statement.value)
+            exports = {member for member in values if not member.startswith("_")}
+        elif (
+            isinstance(statement, ast.AugAssign)
+            and isinstance(statement.op, ast.Add)
+        ):
+            values = _extract_python_string_names(statement.value)
+            if operator == "=":
+                exports = {member for member in values if not member.startswith("_")}
+            else:
+                exports.update(member for member in values if not member.startswith("_"))
     return has_explicit_all, exports
 
 
@@ -405,6 +480,11 @@ def _extract_python_public_names(lines: list[str]) -> set[str]:
             if not name.startswith("_"):
                 exports.add(name)
             index += 1
+            continue
+
+        if PYTHON_IMPORT_START_PATTERN.search(line):
+            statement_source, index = _collect_python_import_statement(lines, index)
+            exports.update(_extract_python_imported_names(statement_source))
             continue
 
         assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
