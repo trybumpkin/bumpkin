@@ -1,0 +1,5 @@
+{
+  "language": "python",
+  "category": "patch_internal_refactor",
+  "note": "Real merged PR from pydantic/pydantic-settings (#876). This is a behavior fix inside internal default-merging logic and should resolve to PATCH."
+}

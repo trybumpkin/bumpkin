@@ -1,5 +1,0 @@
-{
-  "language": "python",
-  "category": "major_signature_change",
-  "note": "Required parameter added to a public python function."
-}

@@ -96,7 +96,8 @@ def test_multilanguage_baselines_exist_and_match_language_group() -> None:
         path = baselines_root / filename
         assert path.is_file(), f"Missing baseline file: {path}"
         payload = json.loads(path.read_text(encoding="utf-8"))
-        assert payload["prompt_version"] == "generic-v0"
+        expected_prompt_version = "python-v1" if language_group == "python" else "generic-v0"
+        assert payload["prompt_version"] == expected_prompt_version
         assert payload["language_group"] == language_group
         assert payload["min_overall_pass_rate"] == 0.0
 

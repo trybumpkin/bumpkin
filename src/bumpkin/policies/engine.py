@@ -330,6 +330,12 @@ def summarize_evidence(
     unknown_impactful = 0
     for finding in findings:
         severity = finding.severity.upper()
+        if finding.rule == "python_requires_floor_raised":
+            if severity in {"MINOR", "MAJOR"}:
+                export_public += 1
+            if severity == "MAJOR":
+                export_breaking += 1
+            continue
         boundary = classify_finding_boundary(finding, public_hints=public_hints)
         if severity in {"MINOR", "MAJOR"} and boundary == "unknown":
             unknown_impactful += 1

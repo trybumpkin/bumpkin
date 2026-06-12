@@ -13,7 +13,12 @@ SEVERITY_ORDER = {
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
+PYTHON_EXTENSIONS = (".py",)
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+REQUIRES_PYTHON_PATTERN = re.compile(
+    r"""requires-python\s*=\s*["']>=\s*(\d+(?:\.\d+)*)[^"']*["']""",
+    re.IGNORECASE,
+)
 
 EXPORT_DECL_PATTERNS = [
     re.compile(r"\bexport\s+(?:declare\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)"),
@@ -32,6 +37,11 @@ EXPORT_FUNCTION_SIGNATURE_PATTERNS = [
         r"(?:async\s*)?\(([^)]*)\)\s*(?::\s*([^=]+?))?\s*=>"
     ),
 ]
+PYTHON_PUBLIC_DEF_PATTERN = re.compile(
+    r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*(?:->\s*([^:]+))?:"
+)
+PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+PYTHON_ALL_EXPORT_PATTERN = re.compile(r"__all__\s*=\s*[\[(]([^\])]+)[\])]")
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,7 @@ class _FileDiff:
     path: str
     removed_lines: list[str]
     added_lines: list[str]
+    context_lines: list[str]
     touched_export_markers: bool
 
 
@@ -135,6 +146,11 @@ def _is_js_ts_path(path: str) -> bool:
     return normalized.endswith(JS_TS_EXTENSIONS)
 
 
+def _is_python_path(path: str) -> bool:
+    normalized = path.strip().lower()
+    return normalized.endswith(PYTHON_EXTENSIONS)
+
+
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
     file_diffs: list[_FileDiff] = []
     current: _FileDiff | None = None
@@ -150,6 +166,7 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
                 path=header.group(2),
                 removed_lines=[],
                 added_lines=[],
+                context_lines=[],
                 touched_export_markers=False,
             )
             continue
@@ -170,6 +187,10 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
                 current.added_lines.append(line)
                 if "export " in line:
                     current.touched_export_markers = True
+        elif raw.startswith(" "):
+            line = raw[1:].strip()
+            if line:
+                current.context_lines.append(line)
 
     if current is not None:
         file_diffs.append(current)
@@ -203,6 +224,7 @@ def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
             path="<unknown>.ts",
             removed_lines=removed,
             added_lines=added,
+            context_lines=[],
             touched_export_markers=touched_export,
         )
     ]
@@ -250,6 +272,111 @@ def _extract_export_signatures(lines: list[str]) -> dict[str, list[_FunctionSign
                 )
                 signatures.setdefault(signature.name, []).append(signature)
     return signatures
+
+
+def _extract_python_public_names(lines: list[str]) -> set[str]:
+    all_exports = _extract_python_all_exports(lines)
+    if all_exports:
+        return all_exports
+
+    exports: set[str] = set()
+    for line in lines:
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
+        if def_match:
+            name = def_match.group(1)
+            params = _split_top_level_params(def_match.group(2))
+            if name.startswith("_"):
+                continue
+            if params and params[0].strip() in {"self", "cls"}:
+                continue
+            exports.add(name)
+            continue
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
+        if class_match:
+            name = class_match.group(1)
+            if not name.startswith("_"):
+                exports.add(name)
+
+    return exports
+
+
+def _extract_python_all_exports(lines: list[str]) -> set[str]:
+    exports: set[str] = set()
+    for line in lines:
+        match = PYTHON_ALL_EXPORT_PATTERN.search(line)
+        if not match:
+            continue
+        members = re.findall(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""", match.group(1))
+        exports.update(member for member in members if not member.startswith("_"))
+    return exports
+
+
+def _extract_python_signatures(
+    lines: list[str],
+    *,
+    context_lines: list[str] | None = None,
+) -> dict[str, list[_FunctionSignature]]:
+    signatures: dict[str, list[_FunctionSignature]] = {}
+    current_class: str | None = None
+
+    scan_lines = [(line, False) for line in context_lines or []] + [(line, True) for line in lines]
+    for line, is_target_line in scan_lines:
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
+        if class_match:
+            class_name = class_match.group(1)
+            current_class = class_name if not class_name.startswith("_") else None
+            continue
+
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(line)
+        if not def_match:
+            continue
+        if not is_target_line:
+            continue
+
+        name = def_match.group(1)
+        params = re.sub(r"\s+", "", def_match.group(2))
+        return_type = _normalize_type(def_match.group(3))
+        param_list = _split_top_level_params(def_match.group(2))
+        if name == "__init__" and current_class and param_list and param_list[0].strip() == "self":
+            symbol_name = f"{current_class}.__init__"
+        else:
+            if name.startswith("_"):
+                continue
+            if param_list and param_list[0].strip() in {"self", "cls"}:
+                continue
+            symbol_name = name
+
+        signature = _FunctionSignature(
+            name=symbol_name,
+            params=params,
+            return_type=return_type,
+            source=line,
+        )
+        signatures.setdefault(symbol_name, []).append(signature)
+
+    return signatures
+
+
+def _extract_python_classes(lines: list[str]) -> set[str]:
+    classes: set[str] = set()
+    for line in lines:
+        match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
+        if not match:
+            continue
+        name = match.group(1)
+        if not name.startswith("_"):
+            classes.add(name)
+    return classes
+
+
+def _extract_requires_python_floor(lines: list[str]) -> tuple[int, ...] | None:
+    for line in lines:
+        match = REQUIRES_PYTHON_PATTERN.search(line)
+        if not match:
+            continue
+        return tuple(int(part) for part in match.group(1).split("."))
+    return None
 
 
 def _split_top_level_params(params: str) -> list[str]:
@@ -670,4 +797,283 @@ def detect_js_ts_export_findings(diff_text: str) -> list[Finding]:
                 )
             )
 
+    return findings
+
+
+def detect_python_api_findings(diff_text: str) -> list[Finding]:
+    file_diffs = _parse_diff_files(diff_text)
+    findings: list[Finding] = []
+    counter = 0
+
+    for file_diff in file_diffs:
+        removed_floor = _extract_requires_python_floor(file_diff.removed_lines)
+        added_floor = _extract_requires_python_floor(file_diff.added_lines)
+        if (
+            file_diff.path.endswith("pyproject.toml")
+            and removed_floor is not None
+            and added_floor is not None
+            and added_floor > removed_floor
+        ):
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="python_requires_floor_raised",
+                    confidence="high",
+                    title=(
+                        "Raised supported Python floor: "
+                        f"{'.'.join(map(str, removed_floor))} -> {'.'.join(map(str, added_floor))}"
+                    ),
+                    why=(
+                        "Raising the minimum supported Python version is a breaking compatibility "
+                        "change for downstream users on older runtimes."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in file_diff.added_lines
+                            if "requires-python" in line.lower()
+                        ),
+                        file_diff.added_lines[0] if file_diff.added_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
+            continue
+
+        if not _is_python_path(file_diff.path):
+            continue
+
+        start_count = len(findings)
+        removed_exports = _extract_python_public_names(file_diff.removed_lines)
+        added_exports = _extract_python_public_names(file_diff.added_lines)
+        removed_signatures = _extract_python_signatures(
+            file_diff.removed_lines,
+            context_lines=file_diff.context_lines,
+        )
+        added_signatures = _extract_python_signatures(
+            file_diff.added_lines,
+            context_lines=file_diff.context_lines,
+        )
+        removed_classes = _extract_python_classes(file_diff.removed_lines)
+        added_classes = _extract_python_classes(file_diff.added_lines)
+
+        removed_only = sorted(removed_exports - added_exports)
+        added_only = sorted(added_exports - removed_exports)
+        rename_pairs = _match_export_renames(
+            removed_only=removed_only,
+            added_only=added_only,
+            removed_signatures=removed_signatures,
+            added_signatures=added_signatures,
+        )
+        renamed_removed = {old_name for old_name, _ in rename_pairs}
+        renamed_added = {new_name for _, new_name in rename_pairs}
+
+        for old_name, new_name in rename_pairs:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_symbol_renamed",
+                    confidence="high",
+                    title=f"Renamed public Python symbol: {old_name} -> {new_name}",
+                    why=(
+                        "Renaming a public Python symbol removes the previous import path for "
+                        "downstream users."
+                    ),
+                    path=file_diff.path,
+                    snippet=f"{old_name} -> {new_name}",
+                    counter=counter,
+                )
+            )
+
+        removed_only = [symbol for symbol in removed_only if symbol not in renamed_removed]
+        if removed_only:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_symbol_removed",
+                    confidence="high",
+                    title=f"Removed public Python symbol(s): {', '.join(removed_only[:3])}",
+                    why="Removing public Python API symbols is a breaking change for importers.",
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in file_diff.removed_lines
+                            if any(symbol in line for symbol in removed_only)
+                        ),
+                        file_diff.removed_lines[0] if file_diff.removed_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
+
+        added_only = [symbol for symbol in added_only if symbol not in renamed_added]
+        if added_only:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MINOR",
+                    rule="export_symbol_added",
+                    confidence="high",
+                    title=f"Added public Python symbol(s): {', '.join(added_only[:3])}",
+                    why="Adding public Python API symbols expands the supported surface area.",
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in file_diff.added_lines
+                            if any(symbol in line for symbol in added_only)
+                        ),
+                        file_diff.added_lines[0] if file_diff.added_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
+
+        shared_symbols = sorted(set(removed_signatures) & set(added_signatures))
+        for symbol in shared_symbols:
+            old_sigs = removed_signatures.get(symbol, [])
+            new_sigs = added_signatures.get(symbol, [])
+            if not old_sigs or not new_sigs:
+                continue
+
+            old_params = old_sigs[0].params
+            new_params = new_sigs[0].params
+            old_return = old_sigs[0].return_type
+            new_return = new_sigs[0].return_type
+
+            if old_params == new_params and old_return == new_return:
+                continue
+
+            if _is_optional_widening(old_params, new_params):
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MINOR",
+                        rule="export_signature_optional_widening",
+                        confidence="medium",
+                        title=f"Backward-compatible Python signature widening: {symbol}",
+                        why=(
+                            "The public Python callable added only optional parameters, which "
+                            "should remain backward compatible."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
+                continue
+
+            if _is_requiredness_tightening(old_params, new_params):
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_signature_requiredness_tightening",
+                        confidence="high",
+                        title=f"Breaking Python signature tightening: {symbol}",
+                        why=(
+                            "The public Python callable became stricter by adding required input "
+                            "or tightening existing parameters."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
+                continue
+
+            if old_return and new_return and old_return != new_return:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_return_type_changed",
+                        confidence="medium",
+                        title=f"Public Python return type changed: {symbol}",
+                        why=(
+                            "Changing the declared return contract of a public Python callable can "
+                            "break consumers and typing expectations."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
+                continue
+
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_signature_incompatible_change",
+                    confidence="medium",
+                    title=f"Incompatible public Python signature change: {symbol}",
+                    why=(
+                        "The public Python callable changed in a way that is not clearly backward "
+                        "compatible."
+                    ),
+                    path=file_diff.path,
+                    snippet=new_sigs[0].source,
+                    counter=counter,
+                )
+            )
+
+        if len(findings) == start_count:
+            removed_only_classes = sorted(removed_classes - added_classes)
+            added_only_classes = sorted(added_classes - removed_classes)
+            if removed_only_classes:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_symbol_removed",
+                        confidence="high",
+                        title=f"Removed public Python class(es): {', '.join(removed_only_classes[:3])}",
+                        why="Removing a public Python class is a breaking API change.",
+                        path=file_diff.path,
+                        snippet=next(
+                            (
+                                line
+                                for line in file_diff.removed_lines
+                                if any(symbol in line for symbol in removed_only_classes)
+                            ),
+                            file_diff.removed_lines[0] if file_diff.removed_lines else "",
+                        ),
+                        counter=counter,
+                    )
+                )
+            elif added_only_classes:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MINOR",
+                        rule="export_symbol_added",
+                        confidence="high",
+                        title=f"Added public Python class(es): {', '.join(added_only_classes[:3])}",
+                        why="Adding a public Python class expands the available API surface.",
+                        path=file_diff.path,
+                        snippet=next(
+                            (
+                                line
+                                for line in file_diff.added_lines
+                                if any(symbol in line for symbol in added_only_classes)
+                            ),
+                            file_diff.added_lines[0] if file_diff.added_lines else "",
+                        ),
+                        counter=counter,
+                    )
+                )
+
+    return findings
+
+
+def detect_semver_findings(diff_text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    findings.extend(detect_js_ts_export_findings(diff_text))
+    findings.extend(detect_python_api_findings(diff_text))
     return findings

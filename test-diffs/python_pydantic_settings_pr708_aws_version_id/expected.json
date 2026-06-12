@@ -1,0 +1,9 @@
+{
+  "label": "MINOR",
+  "findings": [
+    {
+      "rule": "export_signature_optional_widening",
+      "severity": "MINOR"
+    }
+  ]
+}

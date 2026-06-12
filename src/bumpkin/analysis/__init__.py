@@ -16,6 +16,8 @@ from .findings import (
     AggregatedFindingResult,
     Finding,
     aggregate_findings,
+    detect_python_api_findings,
+    detect_semver_findings,
     detect_js_ts_export_findings,
 )
 from .impact import summarize_impact
@@ -36,6 +38,8 @@ __all__ = [
     "build_diff",
     "build_evidence_items",
     "build_evidence_prompt_text",
+    "detect_python_api_findings",
+    "detect_semver_findings",
     "detect_js_ts_export_findings",
     "detect_language_groups",
     "detect_language_hints",

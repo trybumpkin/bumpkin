@@ -1,0 +1,5 @@
+{
+  "language": "python",
+  "category": "python_support_floor_raise",
+  "note": "Real merged PR from pydantic/pydantic-settings (#699). Raising requires-python from 3.9 to 3.10 should be treated as a breaking compatibility change."
+}

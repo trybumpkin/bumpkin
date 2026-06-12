@@ -1,6 +1,7 @@
 from prompt_pack import (
     FEW_SHOT_EXAMPLES,
     PROMPT_VERSION,
+    PYTHON_PROMPT_VERSION,
     REQUIRED_FEW_SHOT_CATEGORIES,
     build_messages,
     get_prompt_pack,
@@ -56,21 +57,39 @@ def test_get_prompt_pack_returns_promoted_js_ts_pack() -> None:
 
 
 def test_get_prompt_pack_uses_experimental_generic_fallback() -> None:
-    pack = get_prompt_pack(language_group="python")
+    pack = get_prompt_pack(language_group="go")
 
     assert pack.metadata.prompt_version == "generic-v0"
     assert pack.metadata.language_group == "generic"
     assert pack.metadata.promotion_status == "experimental"
 
 
+def test_get_prompt_pack_returns_python_pack() -> None:
+    pack = get_prompt_pack(language_group="python")
+
+    assert pack.metadata.prompt_version == PYTHON_PROMPT_VERSION
+    assert pack.metadata.language_group == "python"
+    assert pack.metadata.promotion_status == "experimental"
+
+
 def test_build_messages_uses_generic_prompt_for_unsupported_language() -> None:
     messages = build_messages(
         "+ pub fn ping() {}",
-        language_group="python",
+        language_group="go",
     )
 
     assert "JavaScript/TypeScript public API rules" not in messages[-1]["content"]
     assert "Generic public API rules" in messages[-1]["content"]
+
+
+def test_build_messages_uses_python_prompt_for_python_language_group() -> None:
+    messages = build_messages(
+        '+requires-python = ">=3.10"',
+        language_group="python",
+    )
+
+    assert "Generic public API rules" not in messages[-1]["content"]
+    assert "Python public API rules" in messages[-1]["content"]
 
 
 def test_surface_area_required_is_a_required_few_shot_category() -> None:

@@ -1,4 +1,10 @@
-from findings import Finding, aggregate_findings, detect_js_ts_export_findings
+from findings import (
+    Finding,
+    aggregate_findings,
+    detect_js_ts_export_findings,
+    detect_python_api_findings,
+    detect_semver_findings,
+)
 
 
 def test_detect_findings_removed_export_is_major() -> None:
@@ -128,6 +134,65 @@ diff --git a/src/api.py b/src/api.py
 """
     findings = detect_js_ts_export_findings(diff_text)
     assert findings == []
+
+
+def test_detect_python_findings_public_function_removed_is_major() -> None:
+    diff_text = """
+diff --git a/pydantic_settings/api.py b/pydantic_settings/api.py
+--- a/pydantic_settings/api.py
++++ b/pydantic_settings/api.py
+@@ -1,3 +1,2 @@
+-def load_settings(path: str) -> str:
+-    return path
++pass
+"""
+    findings = detect_python_api_findings(diff_text)
+    assert any(finding.severity == "MAJOR" for finding in findings)
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+
+
+def test_detect_python_findings_public_constructor_optional_widening_is_minor() -> None:
+    diff_text = """
+diff --git a/pydantic_settings/sources/providers/toml.py b/pydantic_settings/sources/providers/toml.py
+--- a/pydantic_settings/sources/providers/toml.py
++++ b/pydantic_settings/sources/providers/toml.py
+@@ -1,3 +1,3 @@
+ class TomlConfigSettingsSource:
+-    def __init__(self, settings_cls: type[BaseSettings], toml_file: PathType | None = DEFAULT_PATH):
++    def __init__(self, settings_cls: type[BaseSettings], toml_file: PathType | None = DEFAULT_PATH, toml_table_header: tuple[str, ...] = ()):
+         pass
+"""
+    findings = detect_python_api_findings(diff_text)
+    assert any(finding.rule == "export_signature_optional_widening" for finding in findings)
+    assert any(finding.severity == "MINOR" for finding in findings)
+
+
+def test_detect_python_findings_support_floor_raise_is_major() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_semver_findings_combines_language_detectors() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_semver_findings(diff_text)
+    assert any(finding.rule == "python_requires_floor_raised" for finding in findings)
 
 
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:

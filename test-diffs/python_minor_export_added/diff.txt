@@ -1,2 +1,0 @@
-+ def list_users() -> list[str]:
-+     return []

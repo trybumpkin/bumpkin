@@ -12,7 +12,7 @@ from typing import Any, cast
 from bumpkin.analysis.case_file import build_case_file, render_case_file_text
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.evidence import build_evidence_items, summarize_evidence_items
-from bumpkin.analysis.findings import Finding, aggregate_findings, detect_js_ts_export_findings
+from bumpkin.analysis.findings import Finding, aggregate_findings, detect_semver_findings
 from bumpkin.analysis.impact import summarize_impact
 from bumpkin.config import BumpkinConfig
 from bumpkin.contracts import build_coverage_contract
@@ -1667,7 +1667,7 @@ def analyze_diff_core(
         policy=bumpkin_config.behavior_contract_policy,
     )
     findings = (
-        detect_js_ts_export_findings(diff_result.full_diff_text)
+        detect_semver_findings(diff_result.full_diff_text)
         if diff_result.full_diff_text and not scope_mismatch_detected
         else []
     )

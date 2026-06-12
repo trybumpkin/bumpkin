@@ -41,12 +41,17 @@ This is one of the biggest things that affects whether the SemVer call is trustw
 
 ### 2. Better support for Python
 
-Python support still needs work around:
+Python now has a better starting point with:
 
-- stronger public export detection
-- better handling of module-level API changes
+- a dedicated Python prompt pack
+- recent Python-specific eval fixtures from a real upstream package
+- support-floor detection for `requires-python` raises
+
+It still needs more work around:
+
+- stronger module export detection across package layouts
 - clearer package boundary reasoning
-- more Python-specific eval fixtures
+- broader fixture coverage across more Python ecosystems
 
 ### 3. Better support for other languages
 

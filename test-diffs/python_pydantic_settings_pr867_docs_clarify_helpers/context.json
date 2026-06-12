@@ -1,0 +1,5 @@
+{
+  "language": "python",
+  "category": "no_bump_docs_only",
+  "note": "Real merged PR from pydantic/pydantic-settings (#867). Documentation wording cleanup with no runtime behavior change should resolve to NO_BUMP."
+}
