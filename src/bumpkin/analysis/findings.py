@@ -113,6 +113,13 @@ class _FunctionSignature:
     source: str
 
 
+@dataclass(frozen=True)
+class _PythonAllContract:
+    has_explicit: bool
+    is_supported: bool
+    exports: set[str]
+
+
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return left.params == right.params and left.return_type == right.return_type
 
@@ -186,7 +193,7 @@ def _python_package_root(path: str) -> str | None:
     parts = normalized.split("/")
     if len(parts) < 2:
         return None
-    package_root = parts[0]
+    package_root = parts[1] if parts[0] == "src" and len(parts) >= 3 else parts[0]
     return package_root or None
 
 
@@ -439,7 +446,7 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
     return exports
 
 
-def _workspace_python_all_contract(path: str) -> tuple[bool, set[str]] | None:
+def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
     lines = _read_workspace_python_lines(path)
     if lines is None:
         return None
@@ -505,7 +512,7 @@ def _infer_python_constructor_class_from_workspace(
     return None
 
 
-def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
+def _extract_python_all_contract(lines: list[str]) -> _PythonAllContract:
     exports: set[str] = set()
     has_explicit_all = False
     has_unsupported_all = False
@@ -519,6 +526,7 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
         if not match:
             index += 1
             continue
+        has_explicit_all = True
         assignment_source, index = _collect_python_all_assignment(lines, index)
         operator = match.group(1)
         try:
@@ -535,14 +543,12 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
             if not supported:
                 has_unsupported_all = True
                 continue
-            has_explicit_all = True
             exports = {member for member in values if not member.startswith("_")}
         elif isinstance(statement, ast.AugAssign) and isinstance(statement.op, ast.Add):
             supported, values = _extract_python_string_names(statement.value)
             if not supported:
                 has_unsupported_all = True
                 continue
-            has_explicit_all = True
             if operator == "=":
                 exports = {member for member in values if not member.startswith("_")}
             else:
@@ -550,15 +556,19 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
         else:
             has_unsupported_all = True
     if has_unsupported_all:
-        return False, set()
-    return has_explicit_all, exports
+        return _PythonAllContract(
+            has_explicit=has_explicit_all,
+            is_supported=False,
+            exports=set(),
+        )
+    return _PythonAllContract(
+        has_explicit=has_explicit_all,
+        is_supported=True,
+        exports=exports,
+    )
 
 
-def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
-    has_explicit_all, all_exports = _extract_python_all_contract(lines)
-    if has_explicit_all:
-        return all_exports
-
+def _extract_python_implicit_public_names(lines: list[str], *, path: str) -> set[str]:
     exports: set[str] = set()
     allow_reexport_imports = _is_python_reexport_surface(path)
     index = 0
@@ -604,6 +614,13 @@ def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
         index += 1
 
     return exports
+
+
+def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
+    all_contract = _extract_python_all_contract(lines)
+    if all_contract.has_explicit and all_contract.is_supported:
+        return all_contract.exports
+    return _extract_python_implicit_public_names(lines, path=path)
 
 
 def _iter_python_version_lines(
@@ -1223,23 +1240,67 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         start_count = len(findings)
         removed_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="-")
         added_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="+")
-        removed_has_explicit_all, removed_all_exports = _extract_python_all_contract(
-            removed_version_lines
+        removed_all_contract = _extract_python_all_contract(removed_version_lines)
+        added_all_contract = _extract_python_all_contract(added_version_lines)
+        removed_has_explicit_all = (
+            removed_all_contract.has_explicit and removed_all_contract.is_supported
         )
-        added_has_explicit_all, added_all_exports = _extract_python_all_contract(
-            added_version_lines
-        )
+        added_has_explicit_all = added_all_contract.has_explicit and added_all_contract.is_supported
+        removed_all_exports = set(removed_all_contract.exports)
+        added_all_exports = set(added_all_contract.exports)
         workspace_all_contract = _workspace_python_all_contract(file_diff.path)
         if (
             workspace_all_contract is not None
             and not removed_has_explicit_all
             and not added_has_explicit_all
-            and workspace_all_contract[0]
+            and workspace_all_contract.has_explicit
+            and workspace_all_contract.is_supported
         ):
             removed_has_explicit_all = True
             added_has_explicit_all = True
-            removed_all_exports = set(workspace_all_contract[1])
-            added_all_exports = set(workspace_all_contract[1])
+            removed_all_exports = set(workspace_all_contract.exports)
+            added_all_exports = set(workspace_all_contract.exports)
+        unresolved_all_contract = any(
+            contract is not None and contract.has_explicit and not contract.is_supported
+            for contract in (
+                removed_all_contract,
+                added_all_contract,
+                workspace_all_contract,
+            )
+        )
+        if unresolved_all_contract:
+            candidate_names = sorted(
+                _extract_python_implicit_public_names(removed_version_lines, path=file_diff.path)
+                | _extract_python_implicit_public_names(added_version_lines, path=file_diff.path)
+            )
+            if candidate_names:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MANUAL_REVIEW",
+                        rule="python_all_unresolved",
+                        confidence="low",
+                        title="Unable to resolve explicit Python __all__ contract",
+                        why=(
+                            "This module declares __all__ using a dynamic or unsupported "
+                            "expression, so Bumpkin cannot deterministically confirm whether the "
+                            "changed symbol is part of the public surface."
+                        ),
+                        path=file_diff.path,
+                        snippet=next(
+                            (
+                                line
+                                for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                                if "__all__" in line
+                            ),
+                            file_diff.added_lines[0]
+                            if file_diff.added_lines
+                            else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                        ),
+                        counter=counter,
+                    )
+                )
+            continue
         removed_exports = (
             removed_all_exports
             if removed_has_explicit_all

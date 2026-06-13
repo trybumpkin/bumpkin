@@ -537,7 +537,7 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_falls_back_when___all___is_dynamic() -> None:
+def test_detect_python_findings_requests_manual_review_when___all___is_dynamic() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
 --- a/pkg/api.py
@@ -550,8 +550,28 @@ diff --git a/pkg/api.py b/pkg/api.py
 """
     findings = detect_python_api_findings(diff_text)
 
-    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
-    assert any("public_api" in finding.title for finding in findings)
+    assert any(finding.rule == "python_all_unresolved" for finding in findings)
+    assert any(finding.severity == "MANUAL_REVIEW" for finding in findings)
+
+
+def test_detect_python_findings_does_not_promote_helper_changes_when___all___is_dynamic() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,6 +1,6 @@
+ __all__ = [name for name in ("public_api",)]
+
+-def helper(value: str = "x") -> str:
++def helper(value: str) -> str:
+     return value
+
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_all_unresolved" for finding in findings)
+    assert not any("helper" in finding.title for finding in findings)
 
 
 def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
@@ -656,6 +676,25 @@ def test_detect_python_findings_detects_absolute_api_module_reexport_rename() ->
 diff --git a/pkg/api.py b/pkg/api.py
 --- a/pkg/api.py
 +++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+-from pkg.client import Client
++from pkg.client import ServiceClient
+ def health() -> str:
+     return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_absolute_api_module_reexport_rename_in_src_layout() -> None:
+    diff_text = """
+diff --git a/src/pkg/api.py b/src/pkg/api.py
+--- a/src/pkg/api.py
++++ b/src/pkg/api.py
 @@ -1,4 +1,4 @@
 -from pkg.client import Client
 +from pkg.client import ServiceClient
