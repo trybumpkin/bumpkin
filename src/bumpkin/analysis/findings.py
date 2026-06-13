@@ -455,12 +455,12 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
 
 
 def _workspace_python_api_reexport_names(path: str) -> set[str] | None:
-    normalized = path.strip().replace("\\", "/").strip("/")
+    raw_path = Path(path.strip())
+    normalized = raw_path.as_posix().lower()
     if not (normalized == "api.py" or normalized.endswith("/api.py")):
         return None
 
-    path_obj = Path(normalized)
-    init_path = path_obj.parent / "__init__.py"
+    init_path = raw_path.parent / "__init__.py"
     lines = _read_workspace_python_lines(str(init_path))
     if lines is None:
         return set()
