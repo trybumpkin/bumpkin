@@ -1001,6 +1001,22 @@ diff --git a/pkg/api.pyi b/pkg/api.pyi
     assert not any("stable" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_removed_stub_overload() -> None:
+    diff_text = """
+diff --git a/pkg/api.pyi b/pkg/api.pyi
+--- a/pkg/api.pyi
++++ b/pkg/api.pyi
+@@ -1,2 +1,1 @@
+ def public_api(x: int) -> int: ...
+-def public_api(x: str) -> int: ...
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_overload_removed" for finding in findings)
+    assert any("public_api" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_ignores_internal_helpers_in_reexported_api_module(
     tmp_path: Path,
     monkeypatch,
@@ -1062,6 +1078,24 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any(
         finding.rule == "export_symbol_added" and "new_api" in finding.title for finding in findings
     )
+
+
+def test_detect_python_findings_detects_import_alias_reexport_rename() -> None:
+    diff_text = """
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+--- a/pkg/__init__.py
++++ b/pkg/__init__.py
+@@ -1,1 +1,1 @@
+-import pkg.client as Client
++import pkg.client as ServiceClient
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
 
 
 def test_detect_python_findings_ignores_regular_module_relative_import_churn(

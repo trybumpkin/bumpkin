@@ -48,7 +48,7 @@ PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__(?:\s*:\s*[^=]+)?\s*(\
 PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
 )
-PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*from\b.+\bimport\b")
+PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,10 @@ class _PythonParameterSpec:
 
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return left.params == right.params and left.return_type == right.return_type
+
+
+def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None]:
+    return (signature.params, signature.return_type)
 
 
 def _match_export_renames(
@@ -439,15 +443,9 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
     statement = module.body[0]
     exports: set[str] = set()
     package_root = _python_package_root(path)
-    if isinstance(statement, ast.ImportFrom) and (
-        statement.level > 0
-        or (
-            statement.module is not None
-            and package_root is not None
-            and (
-                statement.module == package_root or statement.module.startswith(f"{package_root}.")
-            )
-        )
+    if isinstance(statement, ast.ImportFrom) and _is_python_public_reexport_statement(
+        statement,
+        path=path,
     ):
         for alias in statement.names:
             if alias.name == "*":
@@ -455,19 +453,42 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
             exported_name = alias.asname or alias.name
             if not exported_name.startswith("_"):
                 exports.add(exported_name)
+    elif isinstance(statement, ast.Import):
+        for alias in statement.names:
+            if (
+                alias.asname is None
+                or package_root is None
+                or not (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            ):
+                continue
+            exported_name = alias.asname
+            if not exported_name.startswith("_"):
+                exports.add(exported_name)
     return exports
 
 
 def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> bool:
     package_root = _python_package_root(path)
-    return isinstance(statement, ast.ImportFrom) and (
-        statement.level > 0
-        or (
-            statement.module is not None
-            and package_root is not None
-            and (
-                statement.module == package_root or statement.module.startswith(f"{package_root}.")
+    return (
+        isinstance(statement, ast.ImportFrom)
+        and (
+            statement.level > 0
+            or (
+                statement.module is not None
+                and package_root is not None
+                and (
+                    statement.module == package_root
+                    or statement.module.startswith(f"{package_root}.")
+                )
             )
+        )
+    ) or (
+        isinstance(statement, ast.Import)
+        and package_root is not None
+        and any(
+            alias.asname is not None
+            and (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            for alias in statement.names
         )
     )
 
@@ -900,12 +921,12 @@ def _extract_python_signatures(
         if not def_start:
             index += 1
             continue
-        signature_source, block_is_target, index = _collect_python_signature_block(
+        signature_source, _block_is_target, index = _collect_python_signature_block(
             version_lines,
             index,
         )
         def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if not def_match or not block_is_target:
+        if not def_match:
             continue
 
         name = def_match.group(1)
@@ -1896,6 +1917,64 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             old_sigs = removed_signatures.get(symbol, [])
             new_sigs = added_signatures.get(symbol, [])
             if not old_sigs or not new_sigs:
+                continue
+
+            old_signature_keys = {_signature_key(signature) for signature in old_sigs}
+            new_signature_keys = {_signature_key(signature) for signature in new_sigs}
+            if len(old_sigs) > 1 or len(new_sigs) > 1:
+                if old_signature_keys == new_signature_keys:
+                    continue
+                removed_overloads = old_signature_keys - new_signature_keys
+                added_overloads = new_signature_keys - old_signature_keys
+                counter += 1
+                if removed_overloads and not added_overloads:
+                    findings.append(
+                        _build_finding(
+                            severity="MAJOR",
+                            rule="export_overload_removed",
+                            confidence="high",
+                            title=f"Removed public Python overload(s): {symbol}",
+                            why=(
+                                "Removing a public overload narrows the supported call surface "
+                                "for downstream users."
+                            ),
+                            path=file_diff.path,
+                            snippet=old_sigs[0].source,
+                            counter=counter,
+                        )
+                    )
+                elif added_overloads and not removed_overloads:
+                    findings.append(
+                        _build_finding(
+                            severity="MINOR",
+                            rule="export_overload_added",
+                            confidence="medium",
+                            title=f"Added public Python overload(s): {symbol}",
+                            why=(
+                                "Adding a public overload expands the supported call surface "
+                                "without removing existing ones."
+                            ),
+                            path=file_diff.path,
+                            snippet=new_sigs[0].source,
+                            counter=counter,
+                        )
+                    )
+                else:
+                    findings.append(
+                        _build_finding(
+                            severity="MAJOR",
+                            rule="export_overload_changed",
+                            confidence="high",
+                            title=f"Changed public Python overload set: {symbol}",
+                            why=(
+                                "Changing the supported overload set can remove previously valid "
+                                "call patterns for downstream users."
+                            ),
+                            path=file_diff.path,
+                            snippet=new_sigs[0].source,
+                            counter=counter,
+                        )
+                    )
                 continue
 
             old_params = old_sigs[0].params
