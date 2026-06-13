@@ -657,11 +657,9 @@ def test_detect_python_findings_detects_api_module_reexport_rename_without___all
 diff --git a/pkg/api.py b/pkg/api.py
 --- a/pkg/api.py
 +++ b/pkg/api.py
-@@ -1,4 +1,4 @@
+@@ -1,1 +1,1 @@
 -from .client import Client
 +from .client import ServiceClient
- def health() -> str:
-     return "ok"
 """
     findings = detect_python_api_findings(diff_text)
 
@@ -676,11 +674,9 @@ def test_detect_python_findings_detects_absolute_api_module_reexport_rename() ->
 diff --git a/pkg/api.py b/pkg/api.py
 --- a/pkg/api.py
 +++ b/pkg/api.py
-@@ -1,4 +1,4 @@
+@@ -1,1 +1,1 @@
 -from pkg.client import Client
 +from pkg.client import ServiceClient
- def health() -> str:
-     return "ok"
 """
     findings = detect_python_api_findings(diff_text)
 
@@ -695,11 +691,9 @@ def test_detect_python_findings_detects_absolute_api_module_reexport_rename_in_s
 diff --git a/src/pkg/api.py b/src/pkg/api.py
 --- a/src/pkg/api.py
 +++ b/src/pkg/api.py
-@@ -1,4 +1,4 @@
+@@ -1,1 +1,1 @@
 -from pkg.client import Client
 +from pkg.client import ServiceClient
- def health() -> str:
-     return "ok"
 """
     findings = detect_python_api_findings(diff_text)
 
@@ -751,6 +745,77 @@ diff --git a/pkg/api.py b/pkg/api.py
 +from typing import Any, Literal
  def public_api() -> str:
 """
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_detects_removed_export_with_workspace___all___outside_hunk(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        '__all__ = ["public_api"]\n\n\ndef keep() -> int:\n    return 1\n', encoding="utf-8"
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -3,4 +3,2 @@
+-def public_api() -> int:
+-    return 1
+-
+ def keep() -> int:
+     return 1
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("public_api" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_does_not_treat_newly_public_symbol_as_old_signature_break() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,6 +1,6 @@
+-__all__ = ["public_api"]
++__all__ = ["public_api", "helper"]
+
+ def public_api(x=1):
+     return x
+
+-def helper(x=1, y=2):
++def helper(x, y):
+     return x + y
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_symbol_added" and "helper" in finding.title for finding in findings
+    )
+    assert not any(
+        finding.rule == "export_signature_requiredness_tightening" and "helper" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_ignores_internal_api_module_reexport_churn() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+-from .compat import UserId
++from .compat import UserKey
+ def public_api() -> str:
+     return "ok"
+"""
+
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
