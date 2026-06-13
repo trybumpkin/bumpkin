@@ -15,7 +15,7 @@ SEVERITY_ORDER = {
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
-PYTHON_EXTENSIONS = (".py",)
+PYTHON_EXTENSIONS = (".py", ".pyi")
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
     r"""^\s*requires-python\s*=\s*["']>=\s*(\d+(?:\.\d+)*)[^"']*["']""",
@@ -44,7 +44,7 @@ PYTHON_PUBLIC_DEF_PATTERN = re.compile(
 )
 PYTHON_DEF_START_PATTERN = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 PYTHON_PUBLIC_CLASS_PATTERN = re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b")
-PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__\s*(\+?=)\s*")
+PYTHON_ALL_EXPORT_START_PATTERN = re.compile(r"^\s*__all__(?:\s*:\s*[^=]+)?\s*(\+?=)\s*")
 PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
 )
@@ -619,7 +619,7 @@ def _extract_python_all_contract(lines: list[str]) -> _PythonAllContract:
             has_unsupported_all = True
             continue
         statement = module.body[0]
-        if isinstance(statement, ast.Assign):
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
             supported, values = _extract_python_string_names(statement.value)
             if not supported:
                 has_unsupported_all = True

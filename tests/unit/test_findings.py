@@ -948,6 +948,39 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any(finding.rule == "python_all_unresolved" for finding in findings)
 
 
+def test_detect_python_findings_respects_annotated___all___contracts() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ __all__: list[str] = ["public_api"]
+-def helper(x=1):
++def helper(x):
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_detects_stub_file_signature_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.pyi b/pkg/api.pyi
+--- a/pkg/api.pyi
++++ b/pkg/api.pyi
+@@ -1,1 +1,1 @@
+-def public_api(x: int = ...) -> int: ...
++def public_api(x: int) -> int: ...
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
+    assert any("public_api" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
