@@ -454,18 +454,19 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
     return exports
 
 
-def _workspace_python_api_module_is_reexported(path: str) -> bool:
+def _workspace_python_api_reexport_names(path: str) -> set[str] | None:
     normalized = path.strip().replace("\\", "/").strip("/")
     if not (normalized == "api.py" or normalized.endswith("/api.py")):
-        return False
+        return None
 
     path_obj = Path(normalized)
     init_path = path_obj.parent / "__init__.py"
     lines = _read_workspace_python_lines(str(init_path))
     if lines is None:
-        return False
+        return set()
 
     package_root = _python_package_root(path)
+    exports: set[str] = set()
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -492,13 +493,15 @@ def _workspace_python_api_module_is_reexported(path: str) -> bool:
         )
         if not is_api_reexport:
             continue
-        if any(
-            alias.name == "*" or not (alias.asname or alias.name).startswith("_")
+        if any(alias.name == "*" for alias in statement.names):
+            return None
+        exports.update(
+            alias.asname or alias.name
             for alias in statement.names
-        ):
-            return True
+            if not (alias.asname or alias.name).startswith("_")
+        )
 
-    return False
+    return exports
 
 
 def _looks_like_python_reexport_facade(
@@ -509,7 +512,8 @@ def _looks_like_python_reexport_facade(
 ) -> bool:
     if _is_python_reexport_surface(path):
         return True
-    return _workspace_python_api_module_is_reexported(path)
+    api_reexport_names = _workspace_python_api_reexport_names(path)
+    return api_reexport_names is None or bool(api_reexport_names)
 
 
 def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
@@ -517,13 +521,6 @@ def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
     if lines is None:
         return None
     return _extract_python_all_contract(lines)
-
-
-def _workspace_python_public_names(path: str) -> set[str] | None:
-    lines = _read_workspace_python_lines(path)
-    if lines is None:
-        return None
-    return _extract_python_public_names(lines, path=path, workspace_lines=lines)
 
 
 def _python_statement_anchor(line: str | None) -> str | None:
@@ -654,6 +651,7 @@ def _extract_python_implicit_public_names(
     *,
     path: str,
     workspace_lines: list[str] | None = None,
+    explicit_public_names: set[str] | None = None,
 ) -> set[str]:
     exports: set[str] = set()
     allow_reexport_imports = _looks_like_python_reexport_facade(
@@ -661,6 +659,12 @@ def _extract_python_implicit_public_names(
         path=path,
         workspace_lines=workspace_lines,
     )
+
+    def should_include(name: str) -> bool:
+        if explicit_public_names is None:
+            return True
+        return name in explicit_public_names
+
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -680,26 +684,31 @@ def _extract_python_implicit_public_names(
                 continue
             if params and params[0].strip() in {"self", "cls"}:
                 continue
-            exports.add(name)
+            if should_include(name):
+                exports.add(name)
             continue
 
         class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if class_match:
             name = class_match.group(1)
-            if not name.startswith("_"):
+            if not name.startswith("_") and should_include(name):
                 exports.add(name)
             index += 1
             continue
 
         if allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line):
             statement_source, index = _collect_python_import_statement(lines, index)
-            exports.update(_extract_python_imported_names(statement_source, path=path))
+            exports.update(
+                name
+                for name in _extract_python_imported_names(statement_source, path=path)
+                if should_include(name)
+            )
             continue
 
         assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
         if assignment_match:
             name = assignment_match.group(1)
-            if not name.startswith("_") and name != "__all__":
+            if not name.startswith("_") and name != "__all__" and should_include(name):
                 exports.add(name)
         index += 1
 
@@ -711,6 +720,7 @@ def _extract_python_public_names(
     *,
     path: str,
     workspace_lines: list[str] | None = None,
+    explicit_public_names: set[str] | None = None,
 ) -> set[str]:
     all_contract = _extract_python_all_contract(lines)
     if all_contract.has_explicit and all_contract.is_supported:
@@ -719,7 +729,24 @@ def _extract_python_public_names(
         lines,
         path=path,
         workspace_lines=workspace_lines,
+        explicit_public_names=explicit_public_names,
     )
+
+
+def _extract_python_import_public_names(lines: list[str], *, path: str) -> set[str]:
+    exports: set[str] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not PYTHON_IMPORT_START_PATTERN.search(line):
+            index += 1
+            continue
+        statement_source, index = _collect_python_import_statement(lines, index)
+        exports.update(_extract_python_imported_names(statement_source, path=path))
+    return exports
 
 
 def _iter_python_version_lines(
@@ -999,13 +1026,38 @@ def _same_python_parameter_surface(
     )
 
 
+def _is_python_parameter_kind_compatible(
+    old_param: _PythonParameterSpec,
+    new_param: _PythonParameterSpec,
+) -> bool:
+    if old_param.kind == new_param.kind:
+        return True
+    return (
+        new_param.kind == "arg"
+        and old_param.kind in {"kwonly", "posonly"}
+        and old_param.name == new_param.name
+    )
+
+
+def _is_python_parameter_surface_compatible(
+    old_param: _PythonParameterSpec,
+    new_param: _PythonParameterSpec,
+) -> bool:
+    return (
+        old_param.name == new_param.name
+        and _is_python_parameter_kind_compatible(old_param, new_param)
+        and old_param.required == new_param.required
+        and old_param.annotation == new_param.annotation
+    )
+
+
 def _has_compatible_python_parameter_surface(old_params: str, new_params: str) -> bool:
     old_specs = _parse_python_parameter_specs(old_params)
     new_specs = _parse_python_parameter_specs(new_params)
     if old_specs is None or new_specs is None or len(old_specs) != len(new_specs):
         return False
     return all(
-        _same_python_parameter_surface(old_spec, new_spec)
+        _is_python_parameter_surface_compatible(old_spec, new_spec)
         for old_spec, new_spec in zip(old_specs, new_specs, strict=False)
     )
 
@@ -1469,6 +1521,24 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         removed_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="-")
         added_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="+")
         workspace_lines = _read_workspace_python_lines(file_diff.path)
+        workspace_api_reexport_names = _workspace_python_api_reexport_names(file_diff.path)
+        removed_import_public_names = _extract_python_import_public_names(
+            removed_version_lines,
+            path=file_diff.path,
+        )
+        added_import_public_names = _extract_python_import_public_names(
+            added_version_lines,
+            path=file_diff.path,
+        )
+        api_explicit_public_names: set[str] | None = None
+        if workspace_api_reexport_names:
+            api_explicit_public_names = set(workspace_api_reexport_names)
+            if workspace_api_reexport_names & (
+                removed_import_public_names | added_import_public_names
+            ):
+                api_explicit_public_names.update(
+                    removed_import_public_names | added_import_public_names
+                )
         removed_all_contract = _extract_python_all_contract(removed_version_lines)
         added_all_contract = _extract_python_all_contract(added_version_lines)
         removed_has_explicit_all = (
@@ -1495,11 +1565,13 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     removed_version_lines,
                     path=file_diff.path,
                     workspace_lines=workspace_lines,
+                    explicit_public_names=api_explicit_public_names,
                 )
                 | _extract_python_implicit_public_names(
                     added_version_lines,
                     path=file_diff.path,
                     workspace_lines=workspace_lines,
+                    explicit_public_names=api_explicit_public_names,
                 )
             )
             if candidate_names or touched_all_assignment:
@@ -1544,6 +1616,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 removed_version_lines,
                 path=file_diff.path,
                 workspace_lines=workspace_lines,
+                explicit_public_names=api_explicit_public_names,
             )
         )
         added_exports = (
@@ -1553,6 +1626,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 added_version_lines,
                 path=file_diff.path,
                 workspace_lines=workspace_lines,
+                explicit_public_names=api_explicit_public_names,
             )
         )
         if workspace_explicit_exports is not None:
@@ -1560,7 +1634,16 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 removed_exports = removed_exports & workspace_explicit_exports
             if not added_has_explicit_all:
                 added_exports = added_exports & workspace_explicit_exports
-        workspace_public_names = _workspace_python_public_names(file_diff.path)
+        workspace_public_names = (
+            _extract_python_public_names(
+                workspace_lines,
+                path=file_diff.path,
+                workspace_lines=workspace_lines,
+                explicit_public_names=api_explicit_public_names,
+            )
+            if workspace_lines is not None
+            else None
+        )
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
         removed_classes = _extract_python_classes(

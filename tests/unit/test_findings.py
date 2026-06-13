@@ -981,6 +981,52 @@ diff --git a/pkg/api.pyi b/pkg/api.pyi
     assert any("public_api" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_ignores_internal_helpers_in_reexported_api_module(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import public_api\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        "def public_api():\n    return 1\n\ndef helper(x):\n    return x\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -4,2 +4,2 @@
+-def helper(x=1):
++def helper(x):
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_treats_keyword_only_to_optional_positional_as_compatible() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(*, verbose=False):
++def public_api(verbose=False):
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
