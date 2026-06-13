@@ -526,6 +526,19 @@ def _workspace_python_public_names(path: str) -> set[str] | None:
     return _extract_python_public_names(lines, path=path, workspace_lines=lines)
 
 
+def _python_statement_anchor(line: str | None) -> str | None:
+    if line is None:
+        return None
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if "=" in stripped:
+        left, right = stripped.split("=", 1)
+        if left.strip() and not right.startswith("="):
+            return left.strip()
+    return stripped
+
+
 def _infer_python_constructor_class_from_workspace(
     path: str,
     *,
@@ -568,7 +581,9 @@ def _infer_python_constructor_class_from_workspace(
                 candidate = lines[next_index].strip()
                 if candidate:
                     next_body_line = candidate
-            if body_anchor is None or next_body_line == body_anchor:
+            if body_anchor is None or _python_statement_anchor(
+                next_body_line
+            ) == _python_statement_anchor(body_anchor):
                 candidates.append(current_top_level_class)
         index = next_index
 
@@ -1472,6 +1487,9 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             )
         )
         if unresolved_all_contract:
+            touched_all_assignment = any(
+                "__all__" in line for line in (*file_diff.added_lines, *file_diff.removed_lines)
+            )
             candidate_names = sorted(
                 _extract_python_implicit_public_names(
                     removed_version_lines,
@@ -1484,7 +1502,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     workspace_lines=workspace_lines,
                 )
             )
-            if candidate_names:
+            if candidate_names or touched_all_assignment:
                 counter += 1
                 findings.append(
                     _build_finding(

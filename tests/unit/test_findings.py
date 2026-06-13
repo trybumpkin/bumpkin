@@ -860,6 +860,34 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("public_api" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_constructor_tightening_when_body_anchor_changes(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "class A:\n    def __init__(self, x):\n        self.value = int(x)\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,2 +2,2 @@
+-    def __init__(self, x=1):
+-        self.value = x
++    def __init__(self, x):
++        self.value = int(x)
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "A.__init__" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_does_not_treat_newly_public_symbol_as_old_signature_break() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -903,6 +931,21 @@ diff --git a/pkg/api.py b/pkg/api.py
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_requests_manual_review_for_dynamic___all___only_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-__all__ = compute_exports("v1")
++__all__ = compute_exports("v2")
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_all_unresolved" for finding in findings)
 
 
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
