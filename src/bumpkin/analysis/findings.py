@@ -179,6 +179,17 @@ def _read_workspace_python_lines(path: str) -> list[str] | None:
         return None
 
 
+def _python_package_root(path: str) -> str | None:
+    normalized = path.strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return None
+    parts = normalized.split("/")
+    if len(parts) < 2:
+        return None
+    package_root = parts[0]
+    return package_root or None
+
+
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
     file_diffs: list[_FileDiff] = []
     current: _FileDiff | None = None
@@ -398,7 +409,7 @@ def _extract_python_string_names(node: ast.AST | None) -> tuple[bool, set[str]]:
     return False, set()
 
 
-def _extract_python_imported_names(statement_source: str) -> set[str]:
+def _extract_python_imported_names(statement_source: str, *, path: str) -> set[str]:
     try:
         module = ast.parse(statement_source)
     except SyntaxError:
@@ -408,7 +419,17 @@ def _extract_python_imported_names(statement_source: str) -> set[str]:
 
     statement = module.body[0]
     exports: set[str] = set()
-    if isinstance(statement, ast.ImportFrom) and statement.level > 0:
+    package_root = _python_package_root(path)
+    if isinstance(statement, ast.ImportFrom) and (
+        statement.level > 0
+        or (
+            statement.module is not None
+            and package_root is not None
+            and (
+                statement.module == package_root or statement.module.startswith(f"{package_root}.")
+            )
+        )
+    ):
         for alias in statement.names:
             if alias.name == "*":
                 continue
@@ -572,7 +593,7 @@ def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
 
         if allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line):
             statement_source, index = _collect_python_import_statement(lines, index)
-            exports.update(_extract_python_imported_names(statement_source))
+            exports.update(_extract_python_imported_names(statement_source, path=path))
             continue
 
         assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
@@ -1230,11 +1251,6 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             else _extract_python_public_names(added_version_lines, path=file_diff.path)
         )
         workspace_public_names = _workspace_python_public_names(file_diff.path)
-        if workspace_public_names is not None:
-            if not removed_has_explicit_all:
-                removed_exports = removed_exports | workspace_public_names
-            if not added_has_explicit_all:
-                added_exports = added_exports | workspace_public_names
         removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
         added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
         removed_classes = _extract_python_classes(
@@ -1324,6 +1340,8 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             )
 
         shared_public_exports = removed_exports & added_exports
+        if workspace_public_names is not None:
+            shared_public_exports = shared_public_exports | workspace_public_names
         shared_symbols = sorted(
             symbol
             for symbol in (set(removed_signatures) & set(added_signatures))

@@ -511,6 +511,32 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_does_not_suppress_real_additions_with_workspace_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        'DEFAULT_TIMEOUT = 30\n\ndef public_api() -> str:\n    return "ok"\n',
+        encoding="utf-8",
+    )
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,3 @@
++DEFAULT_TIMEOUT = 30
++
+ def public_api() -> str:
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_falls_back_when___all___is_dynamic() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -616,6 +642,42 @@ diff --git a/pkg/api.py b/pkg/api.py
 +from .client import ServiceClient
  def health() -> str:
      return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_absolute_api_module_reexport_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+-from pkg.client import Client
++from pkg.client import ServiceClient
+ def health() -> str:
+     return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_absolute_init_reexport_rename() -> None:
+    diff_text = """
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+--- a/pkg/__init__.py
++++ b/pkg/__init__.py
+@@ -1,1 +1,1 @@
+-from pkg.client import Client
++from pkg.client import ServiceClient
 """
     findings = detect_python_api_findings(diff_text)
 
