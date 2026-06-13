@@ -120,6 +120,14 @@ class _PythonAllContract:
     exports: set[str]
 
 
+@dataclass(frozen=True)
+class _PythonParameterSpec:
+    name: str
+    kind: str
+    required: bool
+    annotation: str | None
+
+
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return left.params == right.params and left.return_type == right.return_type
 
@@ -446,59 +454,62 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
     return exports
 
 
+def _workspace_python_api_module_is_reexported(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").strip("/")
+    if not (normalized == "api.py" or normalized.endswith("/api.py")):
+        return False
+
+    path_obj = Path(normalized)
+    init_path = path_obj.parent / "__init__.py"
+    lines = _read_workspace_python_lines(str(init_path))
+    if lines is None:
+        return False
+
+    package_root = _python_package_root(path)
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not PYTHON_IMPORT_START_PATTERN.search(line):
+            index += 1
+            continue
+
+        statement_source, index = _collect_python_import_statement(lines, index)
+        try:
+            module = ast.parse(statement_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1 or not isinstance(module.body[0], ast.ImportFrom):
+            continue
+
+        statement = module.body[0]
+        is_api_reexport = (statement.level > 0 and statement.module == "api") or (
+            statement.module is not None
+            and package_root is not None
+            and statement.module == f"{package_root}.api"
+        )
+        if not is_api_reexport:
+            continue
+        if any(
+            alias.name == "*" or not (alias.asname or alias.name).startswith("_")
+            for alias in statement.names
+        ):
+            return True
+
+    return False
+
+
 def _looks_like_python_reexport_facade(
     lines: list[str],
     *,
     path: str,
     workspace_lines: list[str] | None = None,
 ) -> bool:
-    normalized = path.strip().replace("\\", "/").lower()
     if _is_python_reexport_surface(path):
         return True
-    if not (normalized == "api.py" or normalized.endswith("/api.py")):
-        return False
-
-    candidate_lines = lines
-    if workspace_lines is not None:
-        candidate_lines = workspace_lines
-
-    index = 0
-    while index < len(candidate_lines):
-        line = candidate_lines[index]
-        if not _is_python_top_level_statement(line):
-            index += 1
-            continue
-
-        def_start = PYTHON_DEF_START_PATTERN.search(line)
-        if def_start:
-            signature_source, index = _collect_python_signature_source(candidate_lines, index)
-            def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-            if def_match:
-                name = def_match.group(1)
-                params = _split_top_level_params(def_match.group(2))
-                if not name.startswith("_") and not (
-                    params and params[0].strip() in {"self", "cls"}
-                ):
-                    return False
-            continue
-
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if class_match and not class_match.group(1).startswith("_"):
-            return False
-
-        if PYTHON_IMPORT_START_PATTERN.search(line):
-            _, index = _collect_python_import_statement(candidate_lines, index)
-            continue
-
-        assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
-        if assignment_match:
-            name = assignment_match.group(1)
-            if not name.startswith("_") and name != "__all__":
-                return False
-
-        index += 1
-
-    return True
+    return _workspace_python_api_module_is_reexported(path)
 
 
 def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
@@ -886,7 +897,118 @@ def _is_optional_param(token: str) -> bool:
     return left.endswith("?")
 
 
+def _normalize_python_annotation(node: ast.AST | None) -> str | None:
+    if node is None:
+        return None
+    return ast.unparse(node).strip()
+
+
+def _parse_python_parameter_specs(params: str) -> list[_PythonParameterSpec] | None:
+    try:
+        module = ast.parse(f"def _bumpkin_probe({params}):\n    pass\n")
+    except SyntaxError:
+        return None
+    if len(module.body) != 1 or not isinstance(module.body[0], ast.FunctionDef):
+        return None
+
+    arguments = module.body[0].args
+    specs: list[_PythonParameterSpec] = []
+    positional_args = [*arguments.posonlyargs, *arguments.args]
+    positional_defaults: list[ast.expr | None] = [None] * (
+        len(positional_args) - len(arguments.defaults)
+    ) + list(arguments.defaults)
+
+    for index, argument in enumerate(arguments.posonlyargs):
+        specs.append(
+            _PythonParameterSpec(
+                name=argument.arg,
+                kind="posonly",
+                required=positional_defaults[index] is None,
+                annotation=_normalize_python_annotation(argument.annotation),
+            )
+        )
+
+    positional_offset = len(arguments.posonlyargs)
+    for offset, argument in enumerate(arguments.args):
+        specs.append(
+            _PythonParameterSpec(
+                name=argument.arg,
+                kind="arg",
+                required=positional_defaults[positional_offset + offset] is None,
+                annotation=_normalize_python_annotation(argument.annotation),
+            )
+        )
+
+    if arguments.vararg is not None:
+        specs.append(
+            _PythonParameterSpec(
+                name=arguments.vararg.arg,
+                kind="vararg",
+                required=False,
+                annotation=_normalize_python_annotation(arguments.vararg.annotation),
+            )
+        )
+
+    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=False):
+        specs.append(
+            _PythonParameterSpec(
+                name=argument.arg,
+                kind="kwonly",
+                required=default is None,
+                annotation=_normalize_python_annotation(argument.annotation),
+            )
+        )
+
+    if arguments.kwarg is not None:
+        specs.append(
+            _PythonParameterSpec(
+                name=arguments.kwarg.arg,
+                kind="varkw",
+                required=False,
+                annotation=_normalize_python_annotation(arguments.kwarg.annotation),
+            )
+        )
+
+    return specs
+
+
+def _same_python_parameter_surface(
+    old_param: _PythonParameterSpec,
+    new_param: _PythonParameterSpec,
+) -> bool:
+    return (
+        old_param.name == new_param.name
+        and old_param.kind == new_param.kind
+        and old_param.required == new_param.required
+        and old_param.annotation == new_param.annotation
+    )
+
+
+def _has_compatible_python_parameter_surface(old_params: str, new_params: str) -> bool:
+    old_specs = _parse_python_parameter_specs(old_params)
+    new_specs = _parse_python_parameter_specs(new_params)
+    if old_specs is None or new_specs is None or len(old_specs) != len(new_specs):
+        return False
+    return all(
+        _same_python_parameter_surface(old_spec, new_spec)
+        for old_spec, new_spec in zip(old_specs, new_specs, strict=False)
+    )
+
+
 def _is_optional_widening(old_params: str, new_params: str) -> bool:
+    old_specs = _parse_python_parameter_specs(old_params)
+    new_specs = _parse_python_parameter_specs(new_params)
+    if old_specs is not None and new_specs is not None:
+        if len(new_specs) < len(old_specs):
+            return False
+        if not all(
+            _same_python_parameter_surface(old_spec, new_spec)
+            for old_spec, new_spec in zip(old_specs, new_specs[: len(old_specs)], strict=False)
+        ):
+            return False
+        extras = new_specs[len(old_specs) :]
+        return bool(extras) and all(not extra.required for extra in extras)
+
     old_list = _split_top_level_params(old_params)
     new_list = _split_top_level_params(new_params)
     if len(new_list) < len(old_list):
@@ -900,6 +1022,24 @@ def _is_optional_widening(old_params: str, new_params: str) -> bool:
 
 
 def _is_requiredness_tightening(old_params: str, new_params: str) -> bool:
+    old_specs = _parse_python_parameter_specs(old_params)
+    new_specs = _parse_python_parameter_specs(new_params)
+    if old_specs is not None and new_specs is not None:
+        if len(new_specs) < len(old_specs):
+            return True
+
+        for index, old_spec in enumerate(old_specs):
+            if index >= len(new_specs):
+                return True
+            new_spec = new_specs[index]
+            if old_spec.name != new_spec.name or old_spec.kind != new_spec.kind:
+                return False
+            if not old_spec.required and new_spec.required:
+                return True
+
+        extras = new_specs[len(old_specs) :]
+        return any(extra.required for extra in extras)
+
     old_list = _split_top_level_params(old_params)
     new_list = _split_top_level_params(new_params)
     if len(new_list) < len(old_list):
@@ -1555,6 +1695,9 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                         counter=counter,
                     )
                 )
+                continue
+
+            if _has_compatible_python_parameter_surface(old_params, new_params):
                 continue
 
             if old_return and new_return and old_return != new_return:

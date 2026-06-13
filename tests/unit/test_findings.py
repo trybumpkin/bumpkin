@@ -652,11 +652,23 @@ diff --git a/pkg/__init__.py b/pkg/__init__.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_detects_api_module_reexport_rename_without___all__() -> None:
-    diff_text = """
-diff --git a/pkg/api.py b/pkg/api.py
---- a/pkg/api.py
-+++ b/pkg/api.py
+def test_detect_python_findings_detects_api_module_reexport_rename_without___all__(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import ServiceClient\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text("from .client import ServiceClient\n", encoding="utf-8")
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
 @@ -1,1 +1,1 @@
 -from .client import Client
 +from .client import ServiceClient
@@ -669,7 +681,19 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_detects_absolute_api_module_reexport_rename() -> None:
+def test_detect_python_findings_detects_absolute_api_module_reexport_rename(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from pkg.api import ServiceClient\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text("from pkg.client import ServiceClient\n", encoding="utf-8")
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
 --- a/pkg/api.py
@@ -686,7 +710,19 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_detects_absolute_api_module_reexport_rename_in_src_layout() -> None:
+def test_detect_python_findings_detects_absolute_api_module_reexport_rename_in_src_layout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "src" / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from pkg.api import ServiceClient\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text("from pkg.client import ServiceClient\n", encoding="utf-8")
     diff_text = """
 diff --git a/src/pkg/api.py b/src/pkg/api.py
 --- a/src/pkg/api.py
@@ -745,6 +781,54 @@ diff --git a/pkg/api.py b/pkg/api.py
 +from typing import Any, Literal
  def public_api() -> str:
 """
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_optional_default_only_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(limit: int = 10) -> int:
++def public_api(limit: int = 20) -> int:
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_treats_keyword_only_optional_addition_as_widening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(limit: int = 10) -> int:
++def public_api(limit: int = 10, *, verbose: bool = False) -> int:
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_optional_widening" for finding in findings)
+    assert not any(
+        finding.rule == "export_signature_requiredness_tightening" for finding in findings
+    )
+
+
+def test_detect_python_findings_ignores_unexported_import_only_api_module() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-from .compat import UserId
++from .compat import UserKey
+"""
+
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
