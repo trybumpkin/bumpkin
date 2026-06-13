@@ -1035,6 +1035,21 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert findings == []
 
 
+def test_detect_python_findings_requests_manual_review_for_star_reexport_change() -> None:
+    diff_text = """
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+--- a/pkg/__init__.py
++++ b/pkg/__init__.py
+@@ -1,1 +1,1 @@
+-from .api import *
++from .compat import *
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_star_reexport_changed" for finding in findings)
+
+
 def test_detect_python_findings_treats_keyword_only_to_optional_positional_as_compatible() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1043,6 +1058,28 @@ diff --git a/pkg/api.py b/pkg/api.py
 @@ -1,1 +1,1 @@
 -def public_api(*, verbose=False):
 +def public_api(verbose=False):
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_internal_classes_outside_workspace___all__(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        '__all__ = ["public_api"]\n\nclass InternalNew:\n    pass\n', encoding="utf-8"
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -3,0 +4,2 @@
++class InternalNew:
++    pass
 """
 
     findings = detect_python_api_findings(diff_text)

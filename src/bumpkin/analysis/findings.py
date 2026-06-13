@@ -454,6 +454,48 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
     return exports
 
 
+def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> bool:
+    package_root = _python_package_root(path)
+    return isinstance(statement, ast.ImportFrom) and (
+        statement.level > 0
+        or (
+            statement.module is not None
+            and package_root is not None
+            and (
+                statement.module == package_root or statement.module.startswith(f"{package_root}.")
+            )
+        )
+    )
+
+
+def _extract_python_star_reexport_statements(lines: list[str], *, path: str) -> set[str]:
+    statements: set[str] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not PYTHON_IMPORT_START_PATTERN.search(line):
+            index += 1
+            continue
+        statement_source, index = _collect_python_import_statement(lines, index)
+        try:
+            module = ast.parse(statement_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1:
+            continue
+        statement = module.body[0]
+        if not _is_python_public_reexport_statement(statement, path=path):
+            continue
+        if isinstance(statement, ast.ImportFrom) and any(
+            alias.name == "*" for alias in statement.names
+        ):
+            statements.add(statement_source)
+    return statements
+
+
 def _workspace_python_api_reexport_names(path: str) -> set[str] | None:
     raw_path = Path(path.strip())
     normalized = raw_path.as_posix().lower()
@@ -1533,6 +1575,14 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             added_version_lines,
             path=file_diff.path,
         )
+        removed_star_reexports = _extract_python_star_reexport_statements(
+            removed_version_lines,
+            path=file_diff.path,
+        )
+        added_star_reexports = _extract_python_star_reexport_statements(
+            added_version_lines,
+            path=file_diff.path,
+        )
         api_explicit_public_names: set[str] | None = None
         if workspace_api_reexport_names:
             api_explicit_public_names = set(workspace_api_reexport_names)
@@ -1605,6 +1655,35 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     )
                 )
             continue
+        if removed_star_reexports != added_star_reexports and (
+            removed_star_reexports or added_star_reexports
+        ):
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MANUAL_REVIEW",
+                    rule="python_star_reexport_changed",
+                    confidence="low",
+                    title="Changed Python star re-export requires manual review",
+                    why=(
+                        "A Python facade changed a star re-export, so Bumpkin cannot "
+                        "deterministically enumerate which public symbols were added or removed."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if "import *" in line
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
+                    counter=counter,
+                )
+            )
+            continue
         workspace_explicit_exports = (
             set(workspace_all_contract.exports)
             if workspace_all_contract is not None
@@ -1659,6 +1738,11 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             has_explicit_all=added_has_explicit_all,
             explicit_exports=added_all_exports,
         )
+        if workspace_explicit_exports is not None:
+            if not removed_has_explicit_all:
+                removed_classes = removed_classes & workspace_explicit_exports
+            if not added_has_explicit_all:
+                added_classes = added_classes & workspace_explicit_exports
 
         removed_only = sorted(removed_exports - added_exports)
         added_only = sorted(added_exports - removed_exports)
