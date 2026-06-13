@@ -511,6 +511,23 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_falls_back_when___all___is_dynamic() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ __all__ = [name for name in ("public_api",)]
+-def public_api(value: str = "x") -> str:
++def public_api(value: str) -> str:
+     return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
+    assert any("public_api" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
     tmp_path: Path,
     monkeypatch,
@@ -580,6 +597,25 @@ diff --git a/pkg/__init__.py b/pkg/__init__.py
 @@ -1,1 +1,1 @@
 -from .api import Client
 +from .api import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_api_module_reexport_rename_without___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+-from .client import Client
++from .client import ServiceClient
+ def health() -> str:
+     return "ok"
 """
     findings = detect_python_api_findings(diff_text)
 

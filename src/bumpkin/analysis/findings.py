@@ -164,9 +164,9 @@ def _is_root_pyproject(path: str) -> bool:
     return normalized == "pyproject.toml"
 
 
-def _is_package_init(path: str) -> bool:
+def _is_python_reexport_surface(path: str) -> bool:
     normalized = path.strip().replace("\\", "/").lower()
-    return normalized.endswith("/__init__.py") or normalized == "__init__.py"
+    return normalized == "__init__.py" or normalized.endswith(("/__init__.py", "/api.py"))
 
 
 def _read_workspace_python_lines(path: str) -> list[str] | None:
@@ -382,17 +382,20 @@ def _collect_python_import_statement(lines: list[str], start_index: int) -> tupl
     return normalized, cursor
 
 
-def _extract_python_string_names(node: ast.AST | None) -> set[str]:
+def _extract_python_string_names(node: ast.AST | None) -> tuple[bool, set[str]]:
     if node is None:
-        return set()
+        return False, set()
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return {node.value}
+        return True, {node.value}
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         exports: set[str] = set()
         for element in node.elts:
-            exports.update(_extract_python_string_names(element))
-        return exports
-    return set()
+            supported, nested = _extract_python_string_names(element)
+            if not supported:
+                return False, set()
+            exports.update(nested)
+        return True, exports
+    return False, set()
 
 
 def _extract_python_imported_names(statement_source: str) -> set[str]:
@@ -484,6 +487,7 @@ def _infer_python_constructor_class_from_workspace(
 def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
     exports: set[str] = set()
     has_explicit_all = False
+    has_unsupported_all = False
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -494,25 +498,38 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
         if not match:
             index += 1
             continue
-        has_explicit_all = True
         assignment_source, index = _collect_python_all_assignment(lines, index)
         operator = match.group(1)
         try:
             module = ast.parse(assignment_source)
         except SyntaxError:
+            has_unsupported_all = True
             continue
         if len(module.body) != 1:
+            has_unsupported_all = True
             continue
         statement = module.body[0]
         if isinstance(statement, ast.Assign):
-            values = _extract_python_string_names(statement.value)
+            supported, values = _extract_python_string_names(statement.value)
+            if not supported:
+                has_unsupported_all = True
+                continue
+            has_explicit_all = True
             exports = {member for member in values if not member.startswith("_")}
         elif isinstance(statement, ast.AugAssign) and isinstance(statement.op, ast.Add):
-            values = _extract_python_string_names(statement.value)
+            supported, values = _extract_python_string_names(statement.value)
+            if not supported:
+                has_unsupported_all = True
+                continue
+            has_explicit_all = True
             if operator == "=":
                 exports = {member for member in values if not member.startswith("_")}
             else:
                 exports.update(member for member in values if not member.startswith("_"))
+        else:
+            has_unsupported_all = True
+    if has_unsupported_all:
+        return False, set()
     return has_explicit_all, exports
 
 
@@ -522,7 +539,7 @@ def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
         return all_exports
 
     exports: set[str] = set()
-    allow_reexport_imports = _is_package_init(path)
+    allow_reexport_imports = _is_python_reexport_surface(path)
     index = 0
     while index < len(lines):
         line = lines[index]
