@@ -512,6 +512,9 @@ def _looks_like_python_reexport_facade(
 ) -> bool:
     if _is_python_reexport_surface(path):
         return True
+    normalized = path.strip().replace("\\", "/").strip("/").lower()
+    if not (normalized == "api.py" or normalized.endswith("/api.py")):
+        return False
     api_reexport_names = _workspace_python_api_reexport_names(path)
     return api_reexport_names is None or bool(api_reexport_names)
 

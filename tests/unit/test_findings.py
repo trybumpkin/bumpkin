@@ -1012,6 +1012,29 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert findings == []
 
 
+def test_detect_python_findings_ignores_regular_module_relative_import_churn(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    target = package_dir / "models.py"
+    target.write_text("from .types import UserKey\n", encoding="utf-8")
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,1 +1,1 @@
+-from .types import UserId
++from .types import UserKey
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_treats_keyword_only_to_optional_positional_as_compatible() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py

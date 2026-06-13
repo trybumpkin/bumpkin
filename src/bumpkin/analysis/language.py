@@ -33,7 +33,7 @@ def get_language_hints_for_groups(groups: list[str]) -> list[str]:
 def _language_group_for_suffix(suffix: str) -> str | None:
     if suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
         return "javascript-typescript"
-    if suffix == ".py":
+    if suffix in {".py", ".pyi"}:
         return "python"
     if suffix == ".go":
         return "go"

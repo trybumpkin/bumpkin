@@ -1,4 +1,4 @@
-from language import detect_language_hints
+from language import detect_language_groups, detect_language_hints
 
 
 def test_detect_language_hints_for_multiple_languages() -> None:
@@ -12,3 +12,8 @@ def test_detect_language_hints_for_multiple_languages() -> None:
 def test_detect_language_hints_empty_for_unknown_extensions() -> None:
     hints = detect_language_hints(["README.md", "assets/logo.svg"])
     assert hints == []
+
+
+def test_detect_language_groups_treats_stub_files_as_python() -> None:
+    groups = detect_language_groups(["pkg/api.pyi"])
+    assert groups == ["python"]
