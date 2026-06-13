@@ -226,10 +226,7 @@ PYTHON_FEW_SHOT_EXAMPLES = [
     ),
     FewShotExample(
         category="python_support_floor_raise",
-        diff_text=(
-            '-requires-python = ">=3.9"\n'
-            '+requires-python = ">=3.10"'
-        ),
+        diff_text=('-requires-python = ">=3.9"\n+requires-python = ">=3.10"'),
         output={
             "label": "MAJOR",
             "confidence": "high",

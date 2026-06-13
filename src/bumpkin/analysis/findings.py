@@ -321,11 +321,7 @@ def _iter_python_version_source_lines(
     *,
     target_prefix: str,
 ) -> list[str]:
-    return [
-        line
-        for prefix, line in file_diff.ordered_lines
-        if prefix in {" ", target_prefix}
-    ]
+    return [line for prefix, line in file_diff.ordered_lines if prefix in {" ", target_prefix}]
 
 
 def _collect_python_signature_source(lines: list[str], start_index: int) -> tuple[str, int]:
@@ -511,10 +507,7 @@ def _extract_python_all_contract(lines: list[str]) -> tuple[bool, set[str]]:
         if isinstance(statement, ast.Assign):
             values = _extract_python_string_names(statement.value)
             exports = {member for member in values if not member.startswith("_")}
-        elif (
-            isinstance(statement, ast.AugAssign)
-            and isinstance(statement.op, ast.Add)
-        ):
+        elif isinstance(statement, ast.AugAssign) and isinstance(statement.op, ast.Add):
             values = _extract_python_string_names(statement.value)
             if operator == "=":
                 exports = {member for member in values if not member.startswith("_")}
@@ -573,10 +566,6 @@ def _extract_python_public_names(lines: list[str], *, path: str) -> set[str]:
         index += 1
 
     return exports
-
-
-def _extract_python_all_exports(lines: list[str]) -> set[str]:
-    return _extract_python_all_contract(lines)[1]
 
 
 def _iter_python_version_lines(
@@ -664,9 +653,12 @@ def _extract_python_signatures(
             and param_list[0].strip() == "self"
             and _python_indent_level(line) > 0
         ):
-            inferred_class = current_top_level_class or _infer_python_constructor_class_from_workspace(
-                file_diff.path,
-                body_anchor=next_body_line,
+            inferred_class = (
+                current_top_level_class
+                or _infer_python_constructor_class_from_workspace(
+                    file_diff.path,
+                    body_anchor=next_body_line,
+                )
             )
             if inferred_class:
                 symbol_name = f"{inferred_class}.__init__"
@@ -1319,10 +1311,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             symbol
             for symbol in (set(removed_signatures) & set(added_signatures))
             if symbol in shared_public_exports
-            or (
-                symbol.endswith(".__init__")
-                and symbol.rsplit(".", 1)[0] in shared_public_exports
-            )
+            or (symbol.endswith(".__init__") and symbol.rsplit(".", 1)[0] in shared_public_exports)
         )
         for symbol in shared_symbols:
             old_sigs = removed_signatures.get(symbol, [])

@@ -234,8 +234,7 @@ diff --git a/pkg/api.py b/pkg/api.py
         for finding in findings
     )
     assert any(
-        finding.rule == "export_signature_requiredness_tightening"
-        and "B.__init__" in finding.title
+        finding.rule == "export_signature_requiredness_tightening" and "B.__init__" in finding.title
         for finding in findings
     )
 
@@ -521,9 +520,9 @@ def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         '__all__ = ["public_api"]\n\n'
-        'def helper(value: str) -> str:\n'
-        '    return value\n\n'
-        'def public_api() -> str:\n'
+        "def helper(value: str) -> str:\n"
+        "    return value\n\n"
+        "def public_api() -> str:\n"
         '    return "ok"\n',
         encoding="utf-8",
     )
@@ -549,13 +548,13 @@ def test_detect_python_findings_infers_constructor_class_from_workspace(
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        'class Example:\n'
+        "class Example:\n"
         '    """docstring"""\n'
-        '\n'
-        '    flag = True\n'
-        '\n'
-        '    def __init__(self, count: int):\n'
-        '        self.count = count\n',
+        "\n"
+        "    flag = True\n"
+        "\n"
+        "    def __init__(self, count: int):\n"
+        "        self.count = count\n",
         encoding="utf-8",
     )
     diff_text = """
