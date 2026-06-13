@@ -356,7 +356,11 @@ def _collect_python_signature_source(lines: list[str], start_index: int) -> tupl
     cursor = start_index + 1
 
     while cursor < len(lines):
-        if paren_depth <= 0 and collected[-1].rstrip().endswith(":"):
+        stripped = collected[-1].strip()
+        if paren_depth <= 0 and (
+            stripped.endswith(":")
+            or re.search(r"^\s*(?:async\s+)?def\b.*:\s*(?:\.\.\.|pass\b.*|return\b.*)$", stripped)
+        ):
             break
         collected.append(lines[cursor])
         paren_depth += lines[cursor].count("(") - lines[cursor].count(")")
@@ -705,11 +709,6 @@ def _extract_python_implicit_public_names(
         workspace_lines=workspace_lines,
     )
 
-    def should_include(name: str) -> bool:
-        if explicit_public_names is None:
-            return True
-        return name in explicit_public_names
-
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -729,14 +728,13 @@ def _extract_python_implicit_public_names(
                 continue
             if params and params[0].strip() in {"self", "cls"}:
                 continue
-            if should_include(name):
-                exports.add(name)
+            exports.add(name)
             continue
 
         class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if class_match:
             name = class_match.group(1)
-            if not name.startswith("_") and should_include(name):
+            if not name.startswith("_"):
                 exports.add(name)
             index += 1
             continue
@@ -746,14 +744,56 @@ def _extract_python_implicit_public_names(
             exports.update(
                 name
                 for name in _extract_python_imported_names(statement_source, path=path)
-                if should_include(name)
+                if explicit_public_names is None or name in explicit_public_names
             )
             continue
 
         assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
         if assignment_match:
             name = assignment_match.group(1)
-            if not name.startswith("_") and name != "__all__" and should_include(name):
+            if not name.startswith("_") and name != "__all__":
+                exports.add(name)
+        index += 1
+
+    return exports
+
+
+def _extract_python_local_public_names(lines: list[str], *, path: str) -> set[str]:
+    exports: set[str] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if def_start:
+            signature_source, index = _collect_python_signature_source(lines, index)
+            def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        else:
+            def_match = None
+        if def_match:
+            name = def_match.group(1)
+            params = _split_top_level_params(def_match.group(2))
+            if name.startswith("_"):
+                continue
+            if params and params[0].strip() in {"self", "cls"}:
+                continue
+            exports.add(name)
+            continue
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
+        if class_match:
+            name = class_match.group(1)
+            if not name.startswith("_"):
+                exports.add(name)
+            index += 1
+            continue
+
+        assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
+        if assignment_match:
+            name = assignment_match.group(1)
+            if not name.startswith("_") and name != "__all__":
                 exports.add(name)
         index += 1
 
@@ -817,7 +857,11 @@ def _collect_python_signature_block(
     cursor = start_index + 1
 
     while cursor < len(version_lines):
-        if paren_depth <= 0 and collected[-1].rstrip().endswith(":"):
+        stripped = collected[-1].strip()
+        if paren_depth <= 0 and (
+            stripped.endswith(":")
+            or re.search(r"^\s*(?:async\s+)?def\b.*:\s*(?:\.\.\.|pass\b.*|return\b.*)$", stripped)
+        ):
             break
         line, is_target_line = version_lines[cursor]
         collected.append(line)
@@ -1575,6 +1619,14 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             added_version_lines,
             path=file_diff.path,
         )
+        removed_local_public_names = _extract_python_local_public_names(
+            removed_version_lines,
+            path=file_diff.path,
+        )
+        added_local_public_names = _extract_python_local_public_names(
+            added_version_lines,
+            path=file_diff.path,
+        )
         removed_star_reexports = _extract_python_star_reexport_statements(
             removed_version_lines,
             path=file_diff.path,
@@ -1820,6 +1872,13 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             )
 
         shared_public_exports = removed_exports & added_exports
+        if workspace_api_reexport_names:
+            shared_public_exports = (
+                shared_public_exports - removed_local_public_names - added_local_public_names
+            ) | (
+                (removed_local_public_names & added_local_public_names)
+                & workspace_api_reexport_names
+            )
         workspace_public_classes = workspace_public_names or set()
         shared_symbols = sorted(
             symbol
