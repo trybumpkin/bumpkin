@@ -391,8 +391,10 @@ def _collect_python_all_assignment(lines: list[str], start_index: int) -> tuple[
     bracket_depth = (
         lines[start_index].count("[")
         + lines[start_index].count("(")
+        + lines[start_index].count("{")
         - lines[start_index].count("]")
         - lines[start_index].count(")")
+        - lines[start_index].count("}")
     )
     cursor = start_index + 1
 
@@ -403,8 +405,10 @@ def _collect_python_all_assignment(lines: list[str], start_index: int) -> tuple[
         bracket_depth += (
             lines[cursor].count("[")
             + lines[cursor].count("(")
+            + lines[cursor].count("{")
             - lines[cursor].count("]")
             - lines[cursor].count(")")
+            - lines[cursor].count("}")
         )
         cursor += 1
 
@@ -476,6 +480,39 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
             exported_name = alias.asname
             if not exported_name.startswith("_"):
                 exports.add(exported_name)
+    return exports
+
+
+def _extract_python_explicit_import_alias_names(statement_source: str, *, path: str) -> set[str]:
+    try:
+        module = ast.parse(statement_source)
+    except SyntaxError:
+        return set()
+    if len(module.body) != 1:
+        return set()
+
+    statement = module.body[0]
+    exports: set[str] = set()
+    if isinstance(statement, ast.ImportFrom) and _is_python_public_reexport_statement(
+        statement,
+        path=path,
+    ):
+        for alias in statement.names:
+            if alias.name == "*" or alias.asname is None:
+                continue
+            if not alias.asname.startswith("_"):
+                exports.add(alias.asname)
+    elif isinstance(statement, ast.Import):
+        package_root = _python_package_root(path)
+        for alias in statement.names:
+            if (
+                alias.asname is None
+                or package_root is None
+                or not (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            ):
+                continue
+            if not alias.asname.startswith("_"):
+                exports.add(alias.asname)
     return exports
 
 
@@ -970,10 +1007,18 @@ def _extract_python_implicit_public_names(
 
         if allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line):
             statement_source, index = _collect_python_import_statement(lines, index)
+            explicit_alias_names = _extract_python_explicit_import_alias_names(
+                statement_source,
+                path=path,
+            )
             exports.update(
                 name
                 for name in _extract_python_imported_names(statement_source, path=path)
-                if explicit_public_names is None or name in explicit_public_names
+                if (
+                    explicit_public_names is None
+                    or name in explicit_public_names
+                    or name in explicit_alias_names
+                )
             )
             continue
 

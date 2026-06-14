@@ -1137,6 +1137,29 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any(finding.rule == "python_all_unresolved" for finding in findings)
 
 
+def test_detect_python_findings_supports_multiline___all___set_literals() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,5 +1,5 @@
+ __all__ = {
+     "public_api",
+ }
+-def public_api(x: int = 1) -> int:
++def public_api(x: int) -> int:
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
+        for finding in findings
+    )
+    assert not any(finding.rule == "python_all_unresolved" for finding in findings)
+
+
 def test_detect_python_findings_respects_annotated___all___contracts() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1420,6 +1443,43 @@ diff --git a/pkg/api.py b/pkg/api.py
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_detects_api_module_alias_reexport_rename_with_root_subset(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import RootApi\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        "from .client import RootApi\nfrom .client import ServiceClient as ServiceClient\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,1 +2,1 @@
+-from .client import Client as Client
++from .client import ServiceClient as ServiceClient
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_symbol_removed" and "Client" in finding.title
+        for finding in findings
+    )
+    assert any(
+        finding.rule == "export_symbol_added" and "ServiceClient" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_ignores_internal_classes_outside_workspace___all__(
