@@ -1339,11 +1339,20 @@ def _same_python_parameter_surface(
     new_param: _PythonParameterSpec,
 ) -> bool:
     return (
-        old_param.name == new_param.name
+        _is_python_parameter_name_compatible(old_param, new_param)
         and old_param.kind == new_param.kind
         and old_param.required == new_param.required
         and old_param.annotation == new_param.annotation
     )
+
+
+def _is_python_parameter_name_compatible(
+    old_param: _PythonParameterSpec,
+    new_param: _PythonParameterSpec,
+) -> bool:
+    if old_param.kind in {"posonly", "vararg", "varkw"}:
+        return True
+    return old_param.name == new_param.name
 
 
 def _is_python_parameter_kind_compatible(
@@ -1352,11 +1361,7 @@ def _is_python_parameter_kind_compatible(
 ) -> bool:
     if old_param.kind == new_param.kind:
         return True
-    return (
-        new_param.kind == "arg"
-        and old_param.kind in {"kwonly", "posonly"}
-        and old_param.name == new_param.name
-    )
+    return new_param.kind == "arg" and old_param.kind in {"kwonly", "posonly"}
 
 
 def _is_python_parameter_surface_compatible(
@@ -1364,7 +1369,7 @@ def _is_python_parameter_surface_compatible(
     new_param: _PythonParameterSpec,
 ) -> bool:
     return (
-        old_param.name == new_param.name
+        _is_python_parameter_name_compatible(old_param, new_param)
         and _is_python_parameter_kind_compatible(old_param, new_param)
         and old_param.required == new_param.required
         and old_param.annotation == new_param.annotation
@@ -1419,7 +1424,9 @@ def _is_requiredness_tightening(old_params: str, new_params: str) -> bool:
             if index >= len(new_specs):
                 return True
             new_spec = new_specs[index]
-            if old_spec.name != new_spec.name or old_spec.kind != new_spec.kind:
+            if not _is_python_parameter_name_compatible(
+                old_spec, new_spec
+            ) or not _is_python_parameter_kind_compatible(old_spec, new_spec):
                 return False
             if not old_spec.required and new_spec.required:
                 return True
@@ -2148,13 +2155,15 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             )
 
         shared_public_exports = removed_exports & added_exports
+        unreexported_local_public_exports: set[str] = set()
         if workspace_api_reexport_names:
+            shared_local_public_exports = removed_local_public_names & added_local_public_names
+            unreexported_local_public_exports = (
+                shared_local_public_exports - workspace_api_reexport_names
+            )
             shared_public_exports = (
                 shared_public_exports - removed_local_public_names - added_local_public_names
-            ) | (
-                (removed_local_public_names & added_local_public_names)
-                & workspace_api_reexport_names
-            )
+            ) | (shared_local_public_exports & workspace_api_reexport_names)
         workspace_public_classes = workspace_public_names or set()
         shared_symbols = sorted(
             symbol
@@ -2316,6 +2325,55 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     counter=counter,
                 )
             )
+
+        if unreexported_local_public_exports:
+            unresolved_local_symbols = sorted(
+                symbol
+                for symbol in (set(removed_signatures) & set(added_signatures))
+                if (
+                    symbol in unreexported_local_public_exports
+                    or (
+                        symbol.endswith(".__init__")
+                        and symbol.rsplit(".", 1)[0] in unreexported_local_public_exports
+                    )
+                )
+                and set(map(_signature_key, removed_signatures.get(symbol, [])))
+                != set(map(_signature_key, added_signatures.get(symbol, [])))
+            )
+            if unresolved_local_symbols:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MANUAL_REVIEW",
+                        rule="python_api_module_local_surface_changed",
+                        confidence="low",
+                        title=(
+                            "Changed local api.py public-surface candidate requires manual review: "
+                            f"{', '.join(unresolved_local_symbols[:3])}"
+                        ),
+                        why=(
+                            "This api.py module changed a local top-level symbol that is not "
+                            "re-exported from the package root. Bumpkin cannot deterministically "
+                            "tell whether it is part of the public submodule API or an internal "
+                            "helper, so the change should be reviewed manually."
+                        ),
+                        path=file_diff.path,
+                        snippet=next(
+                            (
+                                line
+                                for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                                if any(
+                                    symbol.rsplit(".", 1)[-1] in line
+                                    for symbol in unresolved_local_symbols
+                                )
+                            ),
+                            file_diff.added_lines[0]
+                            if file_diff.added_lines
+                            else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                        ),
+                        counter=counter,
+                    )
+                )
 
         if nested_constructor_change:
             counter += 1

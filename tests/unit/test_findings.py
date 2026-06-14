@@ -1206,7 +1206,7 @@ diff --git a/pkg/api.pyi b/pkg/api.pyi
     assert any("public_api" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_ignores_internal_helpers_in_reexported_api_module(
+def test_detect_python_findings_requests_manual_review_for_internal_helpers_in_reexported_api_module(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1234,7 +1234,8 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 
     findings = detect_python_api_findings(diff_text)
 
-    assert findings == []
+    assert any(finding.rule == "python_api_module_local_surface_changed" for finding in findings)
+    assert any("helper" in finding.title for finding in findings)
 
 
 def test_detect_python_findings_detects_added_public_submodule_symbol_even_when_not_root_reexported(
@@ -1266,6 +1267,42 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 
     assert any(
         finding.rule == "export_symbol_added" and "new_api" in finding.title for finding in findings
+    )
+
+
+def test_detect_python_findings_requests_manual_review_for_local_api_change_in_reexported_api_module(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import root_api\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        "def root_api(x: int = 1) -> int:\n    return x\n\n"
+        "def local_public(flag: bool = False) -> bool:\n    return flag\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -4,2 +4,2 @@
+-def local_public(flag: bool = False) -> bool:
++def local_public(flag: bool) -> bool:
+     return flag
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "python_api_module_local_surface_changed"
+        and "local_public" in finding.title
+        for finding in findings
     )
 
 
@@ -1333,6 +1370,51 @@ diff --git a/pkg/api.py b/pkg/api.py
 @@ -1,1 +1,1 @@
 -def public_api(*, verbose=False):
 +def public_api(verbose=False):
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_positional_only_parameter_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(value, /):
++def public_api(item, /):
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_vararg_parameter_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(*values):
++def public_api(*items):
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_varkw_parameter_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-def public_api(**values):
++def public_api(**items):
 """
 
     findings = detect_python_api_findings(diff_text)
