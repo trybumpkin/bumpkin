@@ -681,6 +681,25 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_direct_api_facade_import_rename_without_root_reexport() -> (
+    None
+):
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-from .client import Client
++from .client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_absolute_api_module_reexport_rename(
     tmp_path: Path,
     monkeypatch,
@@ -701,6 +720,35 @@ diff --git a/pkg/api.py b/pkg/api.py
 @@ -1,1 +1,1 @@
 -from pkg.client import Client
 +from pkg.client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_nested_src_absolute_api_reexport_rename(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    package_dir = tmp_path / "src" / "myorg" / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from myorg.pkg.api import ServiceClient\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text("from myorg.pkg.client import ServiceClient\n", encoding="utf-8")
+    diff_text = """
+diff --git a/src/myorg/pkg/api.py b/src/myorg/pkg/api.py
+--- a/src/myorg/pkg/api.py
++++ b/src/myorg/pkg/api.py
+@@ -1,1 +1,1 @@
+-from myorg.pkg.client import Client
++from myorg.pkg.client import ServiceClient
 """
     findings = detect_python_api_findings(diff_text)
 
@@ -819,11 +867,11 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
-def test_detect_python_findings_ignores_unexported_import_only_api_module() -> None:
+def test_detect_python_findings_ignores_unexported_import_only_regular_module() -> None:
     diff_text = """
-diff --git a/pkg/api.py b/pkg/api.py
---- a/pkg/api.py
-+++ b/pkg/api.py
+diff --git a/pkg/models.py b/pkg/models.py
+--- a/pkg/models.py
++++ b/pkg/models.py
 @@ -1,1 +1,1 @@
 -from .compat import UserId
 +from .compat import UserKey

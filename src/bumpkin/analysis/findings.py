@@ -205,7 +205,12 @@ def _python_package_root(path: str) -> str | None:
     parts = normalized.split("/")
     if len(parts) < 2:
         return None
-    package_root = parts[1] if parts[0] == "src" and len(parts) >= 3 else parts[0]
+    package_parts = parts[:-1]
+    if parts[0] == "src" and len(parts) >= 3:
+        package_parts = parts[1:-1]
+    if not package_parts:
+        return None
+    package_root = ".".join(package_parts)
     return package_root or None
 
 
@@ -571,6 +576,30 @@ def _workspace_python_api_reexport_names(path: str) -> set[str] | None:
     return exports
 
 
+def _looks_like_python_import_only_facade(lines: list[str]) -> bool:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        stripped = line.strip()
+        if not stripped:
+            index += 1
+            continue
+        if stripped.startswith(('"', "'")):
+            index += 1
+            continue
+        if PYTHON_IMPORT_START_PATTERN.search(line):
+            _, index = _collect_python_import_statement(lines, index)
+            continue
+        if PYTHON_ALL_EXPORT_START_PATTERN.search(line):
+            _, index = _collect_python_all_assignment(lines, index)
+            continue
+        return False
+    return True
+
+
 def _looks_like_python_reexport_facade(
     lines: list[str],
     *,
@@ -583,7 +612,10 @@ def _looks_like_python_reexport_facade(
     if not (normalized == "api.py" or normalized.endswith("/api.py")):
         return False
     api_reexport_names = _workspace_python_api_reexport_names(path)
-    return api_reexport_names is None or bool(api_reexport_names)
+    if api_reexport_names is None or api_reexport_names:
+        return True
+    candidate_lines = workspace_lines if workspace_lines is not None else lines
+    return _looks_like_python_import_only_facade(candidate_lines)
 
 
 def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
