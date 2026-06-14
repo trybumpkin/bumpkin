@@ -954,6 +954,25 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     )
 
 
+def test_detect_python_findings_requests_manual_review_for_nested_constructor_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ class Outer:
+     class Inner:
+-        def __init__(self, value: int = 0):
++        def __init__(self, value: int):
+             self.value = value
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_nested_constructor_changed" for finding in findings)
+    assert not any("Outer.__init__" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_requests_manual_review_for_ambiguous_constructor_match(
     tmp_path: Path,
 ) -> None:
@@ -1309,6 +1328,22 @@ diff --git a/pyproject.toml b/pyproject.toml
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_detects_added_requires_python_floor() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,1 +1,2 @@
+ [project]
++requires-python = ">=3.10"
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_requires_floor_raised" for finding in findings)
+    assert any("3.10" in finding.title for finding in findings)
 
 
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:

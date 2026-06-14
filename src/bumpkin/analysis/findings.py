@@ -753,6 +753,115 @@ def _has_ambiguous_python_constructor_match(
     return len(set(candidates)) > 1
 
 
+def _classify_nested_python_constructor_context(
+    path: str,
+    *,
+    body_anchor: str | None,
+) -> str:
+    lines = _read_workspace_python_lines(path)
+    if lines is None:
+        return "unknown"
+
+    stack: list[tuple[str, int, str | None]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        indent = _python_indent_level(line)
+        if line.strip():
+            while stack and indent <= stack[-1][1]:
+                stack.pop()
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
+        if class_match and not line.lstrip().startswith("@"):
+            class_name = class_match.group(1)
+            stack.append(("class", indent, class_name if not class_name.startswith("_") else None))
+            index += 1
+            continue
+
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if not def_start:
+            index += 1
+            continue
+
+        signature_source, next_index = _collect_python_signature_source(lines, index)
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        if def_match and def_match.group(1) == "__init__":
+            next_body_line: str | None = None
+            if next_index < len(lines):
+                candidate = lines[next_index].strip()
+                if candidate:
+                    next_body_line = candidate
+            if body_anchor is None or _python_statement_anchor(
+                next_body_line
+            ) == _python_statement_anchor(body_anchor):
+                public_class_depth = len(
+                    [entry for entry in stack if entry[0] == "class" and entry[2] is not None]
+                )
+                has_function_scope = any(entry[0] == "def" for entry in stack)
+                if has_function_scope:
+                    return "nonpublic"
+                if public_class_depth > 1:
+                    return "public"
+                return "unknown"
+
+        if def_match:
+            stack.append(("def", indent, None))
+            index = next_index
+            continue
+
+        index += 1
+
+    return "unknown"
+
+
+def _classify_nested_python_constructor_context_from_hunk(
+    file_diff: _FileDiff,
+    *,
+    change_index: int,
+) -> str:
+    current_indent = _python_indent_level(file_diff.ordered_lines[change_index][1])
+    if current_indent <= 4:
+        return "unknown"
+
+    public_class_depth = 0
+    has_function_scope = False
+    scope_indent = current_indent
+    cursor = change_index - 1
+    while cursor >= 0:
+        candidate = file_diff.ordered_lines[cursor][1]
+        if not candidate.strip():
+            cursor -= 1
+            continue
+
+        candidate_indent = _python_indent_level(candidate)
+        if candidate_indent >= scope_indent:
+            cursor -= 1
+            continue
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(candidate)
+        if class_match and not candidate.lstrip().startswith("@"):
+            class_name = class_match.group(1)
+            if not class_name.startswith("_"):
+                public_class_depth += 1
+            scope_indent = candidate_indent
+            cursor -= 1
+            continue
+
+        if PYTHON_DEF_START_PATTERN.search(candidate):
+            has_function_scope = True
+            scope_indent = candidate_indent
+            cursor -= 1
+            continue
+
+        cursor -= 1
+
+    if has_function_scope:
+        return "nonpublic"
+    if public_class_depth > 1:
+        return "public"
+    return "unknown"
+
+
 def _extract_python_all_contract(lines: list[str]) -> _PythonAllContract:
     exports: set[str] = set()
     has_explicit_all = False
@@ -1037,6 +1146,8 @@ def _extract_python_signatures(
             and param_list[0].strip() == "self"
             and _python_indent_level(line) > 0
         ):
+            if _python_indent_level(line) > 4:
+                continue
             inferred_class = (
                 current_top_level_class
                 or _infer_python_constructor_class_from_workspace(
@@ -1685,9 +1796,8 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         added_floor = _extract_requires_python_floor(file_diff.added_lines)
         if (
             _is_root_pyproject(file_diff.path)
-            and removed_floor is not None
             and added_floor is not None
-            and added_floor > removed_floor
+            and (removed_floor is None or added_floor > removed_floor)
         ):
             counter += 1
             findings.append(
@@ -1696,12 +1806,16 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     rule="python_requires_floor_raised",
                     confidence="high",
                     title=(
-                        "Raised supported Python floor: "
-                        f"{'.'.join(map(str, removed_floor))} -> {'.'.join(map(str, added_floor))}"
+                        f"Declared supported Python floor: {'.'.join(map(str, added_floor))}"
+                        if removed_floor is None
+                        else (
+                            "Raised supported Python floor: "
+                            f"{'.'.join(map(str, removed_floor))} -> {'.'.join(map(str, added_floor))}"
+                        )
                     ),
                     why=(
-                        "Raising the minimum supported Python version is a breaking compatibility "
-                        "change for downstream users on older runtimes."
+                        "Declaring or raising the minimum supported Python version is a "
+                        "breaking compatibility change for downstream users on older runtimes."
                     ),
                     path=file_diff.path,
                     snippet=next(
@@ -1915,6 +2029,42 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
             and _python_indent_level(line) > 0
             for line in (*file_diff.added_lines, *file_diff.removed_lines)
         ) and _has_ambiguous_python_constructor_match(file_diff.path, body_anchor=None)
+        nested_constructor_change = False
+        for index, (prefix, line) in enumerate(file_diff.ordered_lines):
+            if prefix not in {"+", "-"}:
+                continue
+            if not (PYTHON_DEF_START_PATTERN.search(line) and "__init__" in line):
+                continue
+            if _python_indent_level(line) <= 4:
+                continue
+
+            context = _classify_nested_python_constructor_context_from_hunk(
+                file_diff,
+                change_index=index,
+            )
+            if context == "unknown":
+                next_body_line: str | None = None
+                cursor = index + 1
+                while cursor < len(file_diff.ordered_lines):
+                    _next_prefix, candidate = file_diff.ordered_lines[cursor]
+                    if candidate.strip() and _python_indent_level(candidate) > _python_indent_level(
+                        line
+                    ):
+                        next_body_line = candidate.strip()
+                        break
+                    if candidate.strip() and _python_indent_level(
+                        candidate
+                    ) <= _python_indent_level(line):
+                        break
+                    cursor += 1
+                context = _classify_nested_python_constructor_context(
+                    file_diff.path,
+                    body_anchor=next_body_line,
+                )
+
+            if context == "public":
+                nested_constructor_change = True
+                break
 
         removed_only = sorted(removed_exports - added_exports)
         added_only = sorted(added_exports - removed_exports)
@@ -2157,6 +2307,33 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     ),
                     path=file_diff.path,
                     snippet=new_sigs[0].source,
+                    counter=counter,
+                )
+            )
+
+        if len(findings) == start_count and nested_constructor_change:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MANUAL_REVIEW",
+                    rule="python_nested_constructor_changed",
+                    confidence="low",
+                    title="Changed nested Python constructor requires manual review",
+                    why=(
+                        "A nested Python class constructor changed, and Bumpkin does not "
+                        "deterministically classify nested-class API compatibility yet."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if "__init__" in line
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
                     counter=counter,
                 )
             )
