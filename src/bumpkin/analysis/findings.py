@@ -49,6 +49,7 @@ PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=]+)?=\s*.+$"
 )
 PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
+PYTHON_TYPE_CHECKING_PATTERN = re.compile(r"^\s*if\s+(?:typing\.)?TYPE_CHECKING\s*:\s*$")
 
 
 @dataclass(frozen=True)
@@ -590,12 +591,21 @@ def _looks_like_python_import_only_facade(lines: list[str]) -> bool:
         if stripped.startswith(('"', "'")):
             index += 1
             continue
+        if PYTHON_TYPE_CHECKING_PATTERN.search(line):
+            index += 1
+            continue
         if PYTHON_IMPORT_START_PATTERN.search(line):
             _, index = _collect_python_import_statement(lines, index)
             continue
         if PYTHON_ALL_EXPORT_START_PATTERN.search(line):
             _, index = _collect_python_all_assignment(lines, index)
             continue
+        assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
+        if assignment_match:
+            name = assignment_match.group(1)
+            if name.startswith("__") and name.endswith("__"):
+                index += 1
+                continue
         return False
     return True
 
@@ -690,6 +700,57 @@ def _infer_python_constructor_class_from_workspace(
     if len(unique_candidates) == 1:
         return unique_candidates[0]
     return None
+
+
+def _has_ambiguous_python_constructor_match(
+    path: str,
+    *,
+    body_anchor: str | None,
+) -> bool:
+    lines = _read_workspace_python_lines(path)
+    if lines is None:
+        return False
+
+    candidates: list[str] = []
+    current_top_level_class: str | None = None
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        is_top_level = _is_python_top_level_statement(line)
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
+        if class_match and not line.lstrip().startswith("@"):
+            class_name = class_match.group(1)
+            current_top_level_class = class_name if not class_name.startswith("_") else None
+            index += 1
+            continue
+        if is_top_level and not class_match and line.strip():
+            current_top_level_class = None
+
+        def_start = PYTHON_DEF_START_PATTERN.search(line)
+        if not def_start:
+            index += 1
+            continue
+
+        signature_source, next_index = _collect_python_signature_source(lines, index)
+        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
+        if (
+            current_top_level_class
+            and def_match
+            and def_match.group(1) == "__init__"
+            and _python_indent_level(line) > 0
+        ):
+            next_body_line: str | None = None
+            if next_index < len(lines):
+                candidate = lines[next_index].strip()
+                if candidate:
+                    next_body_line = candidate
+            if body_anchor is None or _python_statement_anchor(
+                next_body_line
+            ) == _python_statement_anchor(body_anchor):
+                candidates.append(current_top_level_class)
+        index = next_index
+
+    return len(set(candidates)) > 1
 
 
 def _extract_python_all_contract(lines: list[str]) -> _PythonAllContract:
@@ -1848,6 +1909,12 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 removed_classes = removed_classes & workspace_explicit_exports
             if not added_has_explicit_all:
                 added_classes = added_classes & workspace_explicit_exports
+        ambiguous_constructor_change = any(
+            PYTHON_DEF_START_PATTERN.search(line)
+            and "__init__" in line
+            and _python_indent_level(line) > 0
+            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+        ) and _has_ambiguous_python_constructor_match(file_diff.path, body_anchor=None)
 
         removed_only = sorted(removed_exports - added_exports)
         added_only = sorted(added_exports - removed_exports)
@@ -2090,6 +2157,33 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     ),
                     path=file_diff.path,
                     snippet=new_sigs[0].source,
+                    counter=counter,
+                )
+            )
+
+        if len(findings) == start_count and ambiguous_constructor_change:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MANUAL_REVIEW",
+                    rule="python_constructor_ambiguous",
+                    confidence="low",
+                    title="Changed Python constructor requires manual review",
+                    why=(
+                        "A public __init__ changed, but Bumpkin could not uniquely match it to a "
+                        "single class from the workspace context."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if "__init__" in line
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
                     counter=counter,
                 )
             )

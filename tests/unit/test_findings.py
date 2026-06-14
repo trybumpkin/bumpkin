@@ -700,6 +700,24 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_api_facade_import_rename_with_metadata() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+ __version__ = "1.0"
+-from .client import Client
++from .client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_absolute_api_module_reexport_rename(
     tmp_path: Path,
     monkeypatch,
@@ -934,6 +952,32 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
         finding.rule == "export_signature_requiredness_tightening" and "A.__init__" in finding.title
         for finding in findings
     )
+
+
+def test_detect_python_findings_requests_manual_review_for_ambiguous_constructor_match(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "class A:\n    def __init__(self, x=1):\n        self.value = int(x)\n\n"
+        "class B:\n    def __init__(self, x=1):\n        self.value = int(x)\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,2 +2,2 @@
+-    def __init__(self, x=1):
+-        self.value = int(x)
++    def __init__(self, x):
++        self.value = int(x)
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_constructor_ambiguous" for finding in findings)
 
 
 def test_detect_python_findings_does_not_treat_newly_public_symbol_as_old_signature_break() -> None:
