@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +135,12 @@ def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) 
 
 def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None]:
     return (signature.params, signature.return_type)
+
+
+def _reindex_findings(findings: list[Finding]) -> list[Finding]:
+    return [
+        replace(finding, id=f"{finding.rule}:{index}") for index, finding in enumerate(findings, 1)
+    ]
 
 
 def _match_export_renames(
@@ -2311,7 +2317,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 )
             )
 
-        if len(findings) == start_count and nested_constructor_change:
+        if nested_constructor_change:
             counter += 1
             findings.append(
                 _build_finding(
@@ -2338,7 +2344,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 )
             )
 
-        if len(findings) == start_count and ambiguous_constructor_change:
+        if ambiguous_constructor_change:
             counter += 1
             findings.append(
                 _build_finding(
@@ -2418,4 +2424,4 @@ def detect_semver_findings(diff_text: str) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(detect_js_ts_export_findings(diff_text))
     findings.extend(detect_python_api_findings(diff_text))
-    return findings
+    return _reindex_findings(findings)

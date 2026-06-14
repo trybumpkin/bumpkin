@@ -211,6 +211,26 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert any(finding.rule == "python_requires_floor_raised" for finding in findings)
 
 
+def test_detect_semver_findings_assigns_unique_ids_across_languages() -> None:
+    diff_text = """
+diff --git a/src/api.ts b/src/api.ts
+--- a/src/api.ts
++++ b/src/api.ts
+@@ -0,0 +1 @@
++export function alpha() {}
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -0,0 +1,2 @@
++def beta():
++    return 1
+"""
+    findings = detect_semver_findings(diff_text)
+
+    assert len(findings) == 2
+    assert len({finding.id for finding in findings}) == 2
+
+
 def test_detect_python_findings_keeps_constructor_changes_bound_to_their_own_classes() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -973,6 +993,31 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert not any("Outer.__init__" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_keeps_nested_constructor_review_alongside_other_findings() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,7 @@
+ class Outer:
+     class Inner:
+-        def __init__(self, value: int = 0):
++        def __init__(self, value: int):
+             self.value = value
++
++def public_api():
++    return 1
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_symbol_added" and "public_api" in finding.title
+        for finding in findings
+    )
+    assert any(finding.rule == "python_nested_constructor_changed" for finding in findings)
+
+
 def test_detect_python_findings_requests_manual_review_for_ambiguous_constructor_match(
     tmp_path: Path,
 ) -> None:
@@ -996,6 +1041,39 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 
     findings = detect_python_api_findings(diff_text)
 
+    assert any(finding.rule == "python_constructor_ambiguous" for finding in findings)
+
+
+def test_detect_python_findings_keeps_ambiguous_constructor_review_alongside_other_findings(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "class A:\n    def __init__(self, x=1):\n        self.value = int(x)\n\n"
+        "class B:\n    def __init__(self, x=1):\n        self.value = int(x)\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,2 +2,5 @@
+-    def __init__(self, x=1):
+-        self.value = int(x)
++    def __init__(self, x):
++        self.value = int(x)
++
++def public_api():
++    return 1
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_symbol_added" and "public_api" in finding.title
+        for finding in findings
+    )
     assert any(finding.rule == "python_constructor_ambiguous" for finding in findings)
 
 
