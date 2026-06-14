@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,9 @@ class _PythonParameterSpec:
     annotation: str | None
 
 
+WorkspaceLoader = Callable[[str], list[str] | None]
+
+
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return left.params == right.params and left.return_type == right.return_type
 
@@ -195,14 +199,31 @@ def _is_python_reexport_surface(path: str) -> bool:
     return normalized == "__init__.py" or normalized.endswith("/__init__.py")
 
 
-def _read_workspace_python_lines(path: str) -> list[str] | None:
-    resolved = Path(path)
-    if not resolved.is_absolute():
-        resolved = Path.cwd() / resolved
-    try:
-        return resolved.read_text(encoding="utf-8").splitlines()
-    except OSError:
+def build_filesystem_workspace_loader(
+    base_dir: str | Path | None = None,
+) -> WorkspaceLoader:
+    base_path = Path(base_dir) if base_dir is not None else Path.cwd()
+
+    def _load(path: str) -> list[str] | None:
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = base_path / resolved
+        try:
+            return resolved.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+
+    return _load
+
+
+def _read_workspace_python_lines(
+    path: str,
+    *,
+    workspace_loader: WorkspaceLoader | None,
+) -> list[str] | None:
+    if workspace_loader is None:
         return None
+    return workspace_loader(path)
 
 
 def _python_package_root(path: str) -> str | None:
@@ -448,6 +469,59 @@ def _extract_python_string_names(node: ast.AST | None) -> tuple[bool, set[str]]:
     return False, set()
 
 
+def _extract_python_possible_string_names(node: ast.AST | None) -> set[str]:
+    supported, values = _extract_python_string_names(node)
+    if supported:
+        return values
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _extract_python_possible_string_names(
+            node.left
+        ) | _extract_python_possible_string_names(node.right)
+    if isinstance(node, (ast.ListComp, ast.SetComp)) and len(node.generators) == 1:
+        generator = node.generators[0]
+        if generator.ifs:
+            return set()
+        if not isinstance(node.elt, ast.Name):
+            return set()
+        target = generator.target
+        if not isinstance(target, ast.Name) or target.id != node.elt.id:
+            return set()
+        return _extract_python_possible_string_names(generator.iter)
+    return set()
+
+
+def _extract_python_possible_all_exports(lines: list[str]) -> set[str]:
+    exports: set[str] = set()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        match = PYTHON_ALL_EXPORT_START_PATTERN.search(line)
+        if not match:
+            index += 1
+            continue
+        assignment_source, index = _collect_python_all_assignment(lines, index)
+        try:
+            module = ast.parse(assignment_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1:
+            continue
+        statement = module.body[0]
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)) or (
+            isinstance(statement, ast.AugAssign) and isinstance(statement.op, ast.Add)
+        ):
+            value = statement.value
+            exports.update(
+                member
+                for member in _extract_python_possible_string_names(value)
+                if not member.startswith("_")
+            )
+    return exports
+
+
 def _extract_python_imported_names(statement_source: str, *, path: str) -> set[str]:
     try:
         module = ast.parse(statement_source)
@@ -570,14 +644,18 @@ def _extract_python_star_reexport_statements(lines: list[str], *, path: str) -> 
     return statements
 
 
-def _workspace_python_api_reexport_names(path: str) -> set[str] | None:
+def _workspace_python_api_reexport_names(
+    path: str,
+    *,
+    workspace_loader: WorkspaceLoader | None,
+) -> set[str] | None:
     raw_path = Path(path.strip())
     normalized = raw_path.as_posix().lower()
     if not (normalized == "api.py" or normalized.endswith("/api.py")):
         return None
 
     init_path = raw_path.parent / "__init__.py"
-    lines = _read_workspace_python_lines(str(init_path))
+    lines = _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
     if lines is None:
         return set()
 
@@ -658,21 +736,29 @@ def _looks_like_python_reexport_facade(
     *,
     path: str,
     workspace_lines: list[str] | None = None,
+    workspace_loader: WorkspaceLoader | None = None,
 ) -> bool:
     if _is_python_reexport_surface(path):
         return True
     normalized = path.strip().replace("\\", "/").strip("/").lower()
     if not (normalized == "api.py" or normalized.endswith("/api.py")):
         return False
-    api_reexport_names = _workspace_python_api_reexport_names(path)
+    api_reexport_names = _workspace_python_api_reexport_names(
+        path,
+        workspace_loader=workspace_loader,
+    )
     if api_reexport_names is None or api_reexport_names:
         return True
     candidate_lines = workspace_lines if workspace_lines is not None else lines
     return _looks_like_python_import_only_facade(candidate_lines)
 
 
-def _workspace_python_all_contract(path: str) -> _PythonAllContract | None:
-    lines = _read_workspace_python_lines(path)
+def _workspace_python_all_contract(
+    path: str,
+    *,
+    workspace_loader: WorkspaceLoader | None,
+) -> _PythonAllContract | None:
+    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
     if lines is None:
         return None
     return _extract_python_all_contract(lines)
@@ -695,8 +781,9 @@ def _infer_python_constructor_class_from_workspace(
     path: str,
     *,
     body_anchor: str | None,
+    workspace_loader: WorkspaceLoader | None,
 ) -> str | None:
-    lines = _read_workspace_python_lines(path)
+    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
     if lines is None:
         return None
 
@@ -749,8 +836,9 @@ def _has_ambiguous_python_constructor_match(
     path: str,
     *,
     body_anchor: str | None,
+    workspace_loader: WorkspaceLoader | None,
 ) -> bool:
-    lines = _read_workspace_python_lines(path)
+    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
     if lines is None:
         return False
 
@@ -800,8 +888,9 @@ def _classify_nested_python_constructor_context(
     path: str,
     *,
     body_anchor: str | None,
+    workspace_loader: WorkspaceLoader | None,
 ) -> str:
-    lines = _read_workspace_python_lines(path)
+    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
     if lines is None:
         return "unknown"
 
@@ -967,12 +1056,14 @@ def _extract_python_implicit_public_names(
     path: str,
     workspace_lines: list[str] | None = None,
     explicit_public_names: set[str] | None = None,
+    workspace_loader: WorkspaceLoader | None = None,
 ) -> set[str]:
     exports: set[str] = set()
     allow_reexport_imports = _looks_like_python_reexport_facade(
         lines,
         path=path,
         workspace_lines=workspace_lines,
+        workspace_loader=workspace_loader,
     )
 
     index = 0
@@ -1080,6 +1171,7 @@ def _extract_python_public_names(
     path: str,
     workspace_lines: list[str] | None = None,
     explicit_public_names: set[str] | None = None,
+    workspace_loader: WorkspaceLoader | None = None,
 ) -> set[str]:
     all_contract = _extract_python_all_contract(lines)
     if all_contract.has_explicit and all_contract.is_supported:
@@ -1089,6 +1181,7 @@ def _extract_python_public_names(
         path=path,
         workspace_lines=workspace_lines,
         explicit_public_names=explicit_public_names,
+        workspace_loader=workspace_loader,
     )
 
 
@@ -1151,6 +1244,7 @@ def _extract_python_signatures(
     file_diff: _FileDiff,
     *,
     target_prefix: str,
+    workspace_loader: WorkspaceLoader | None = None,
 ) -> dict[str, list[_FunctionSignature]]:
     signatures: dict[str, list[_FunctionSignature]] = {}
     current_top_level_class: str | None = None
@@ -1204,6 +1298,7 @@ def _extract_python_signatures(
                 or _infer_python_constructor_class_from_workspace(
                     file_diff.path,
                     body_anchor=next_body_line,
+                    workspace_loader=workspace_loader,
                 )
             )
             if inferred_class:
@@ -1844,7 +1939,11 @@ def detect_js_ts_export_findings(diff_text: str) -> list[Finding]:
     return findings
 
 
-def detect_python_api_findings(diff_text: str) -> list[Finding]:
+def detect_python_api_findings(
+    diff_text: str,
+    *,
+    workspace_loader: WorkspaceLoader | None = None,
+) -> list[Finding]:
     file_diffs = _parse_diff_files(diff_text)
     findings: list[Finding] = []
     counter = 0
@@ -1895,8 +1994,14 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         start_count = len(findings)
         removed_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="-")
         added_version_lines = _iter_python_version_source_lines(file_diff, target_prefix="+")
-        workspace_lines = _read_workspace_python_lines(file_diff.path)
-        workspace_api_reexport_names = _workspace_python_api_reexport_names(file_diff.path)
+        workspace_lines = _read_workspace_python_lines(
+            file_diff.path,
+            workspace_loader=workspace_loader,
+        )
+        workspace_api_reexport_names = _workspace_python_api_reexport_names(
+            file_diff.path,
+            workspace_loader=workspace_loader,
+        )
         removed_import_public_names = _extract_python_import_public_names(
             removed_version_lines,
             path=file_diff.path,
@@ -1938,7 +2043,19 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
         added_has_explicit_all = added_all_contract.has_explicit and added_all_contract.is_supported
         removed_all_exports = set(removed_all_contract.exports)
         added_all_exports = set(added_all_contract.exports)
-        workspace_all_contract = _workspace_python_all_contract(file_diff.path)
+        workspace_all_contract = _workspace_python_all_contract(
+            file_diff.path,
+            workspace_loader=workspace_loader,
+        )
+        partial_unresolved_all_exports: set[str] = (
+            _extract_python_possible_all_exports(removed_version_lines)
+            | _extract_python_possible_all_exports(added_version_lines)
+            | (
+                _extract_python_possible_all_exports(workspace_lines)
+                if workspace_lines is not None
+                else set[str]()
+            )
+        )
         unresolved_all_contract = any(
             contract is not None and contract.has_explicit and not contract.is_supported
             for contract in (
@@ -1957,12 +2074,14 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     path=file_diff.path,
                     workspace_lines=workspace_lines,
                     explicit_public_names=api_explicit_public_names,
+                    workspace_loader=workspace_loader,
                 )
                 | _extract_python_implicit_public_names(
                     added_version_lines,
                     path=file_diff.path,
                     workspace_lines=workspace_lines,
                     explicit_public_names=api_explicit_public_names,
+                    workspace_loader=workspace_loader,
                 )
             )
             if candidate_names or touched_all_assignment:
@@ -1992,7 +2111,6 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                         counter=counter,
                     )
                 )
-            continue
         if removed_star_reexports != added_star_reexports and (
             removed_star_reexports or added_star_reexports
         ):
@@ -2021,7 +2139,6 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     counter=counter,
                 )
             )
-            continue
         workspace_explicit_exports = (
             set(workspace_all_contract.exports)
             if workspace_all_contract is not None
@@ -2037,6 +2154,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 path=file_diff.path,
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
+                workspace_loader=workspace_loader,
             )
         )
         added_exports = (
@@ -2047,6 +2165,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 path=file_diff.path,
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
+                workspace_loader=workspace_loader,
             )
         )
         if workspace_explicit_exports is not None:
@@ -2054,18 +2173,30 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 removed_exports = removed_exports & workspace_explicit_exports
             if not added_has_explicit_all:
                 added_exports = added_exports & workspace_explicit_exports
+        elif unresolved_all_contract and partial_unresolved_all_exports:
+            removed_exports = removed_exports & partial_unresolved_all_exports
+            added_exports = added_exports & partial_unresolved_all_exports
         workspace_public_names = (
             _extract_python_public_names(
                 workspace_lines,
                 path=file_diff.path,
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
+                workspace_loader=workspace_loader,
             )
             if workspace_lines is not None
             else None
         )
-        removed_signatures = _extract_python_signatures(file_diff, target_prefix="-")
-        added_signatures = _extract_python_signatures(file_diff, target_prefix="+")
+        removed_signatures = _extract_python_signatures(
+            file_diff,
+            target_prefix="-",
+            workspace_loader=workspace_loader,
+        )
+        added_signatures = _extract_python_signatures(
+            file_diff,
+            target_prefix="+",
+            workspace_loader=workspace_loader,
+        )
         removed_classes = _extract_python_classes(
             removed_version_lines,
             has_explicit_all=removed_has_explicit_all,
@@ -2081,13 +2212,17 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 removed_classes = removed_classes & workspace_explicit_exports
             if not added_has_explicit_all:
                 added_classes = added_classes & workspace_explicit_exports
-        ambiguous_constructor_change = any(
+        elif unresolved_all_contract and partial_unresolved_all_exports:
+            removed_classes = removed_classes & partial_unresolved_all_exports
+            added_classes = added_classes & partial_unresolved_all_exports
+        constructor_change_present = any(
             PYTHON_DEF_START_PATTERN.search(line)
             and "__init__" in line
             and _python_indent_level(line) > 0
             for line in (*file_diff.added_lines, *file_diff.removed_lines)
-        ) and _has_ambiguous_python_constructor_match(file_diff.path, body_anchor=None)
+        )
         nested_constructor_change = False
+        nonpublic_nested_constructor_change = False
         for index, (prefix, line) in enumerate(file_diff.ordered_lines):
             if prefix not in {"+", "-"}:
                 continue
@@ -2118,11 +2253,34 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 context = _classify_nested_python_constructor_context(
                     file_diff.path,
                     body_anchor=next_body_line,
+                    workspace_loader=workspace_loader,
                 )
 
             if context == "public":
                 nested_constructor_change = True
                 break
+            if context == "nonpublic":
+                nonpublic_nested_constructor_change = True
+
+        resolved_constructor_symbols = {
+            symbol
+            for symbol in (set(removed_signatures) | set(added_signatures))
+            if symbol.endswith(".__init__")
+        }
+        ambiguous_constructor_change = (
+            constructor_change_present
+            and _has_ambiguous_python_constructor_match(
+                file_diff.path,
+                body_anchor=None,
+                workspace_loader=workspace_loader,
+            )
+        )
+        unresolved_constructor_change = (
+            constructor_change_present
+            and not resolved_constructor_symbols
+            and not nested_constructor_change
+            and not nonpublic_nested_constructor_change
+        )
 
         removed_only = sorted(removed_exports - added_exports)
         added_only = sorted(added_exports - removed_exports)
@@ -2447,7 +2605,7 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                 )
             )
 
-        if ambiguous_constructor_change:
+        if ambiguous_constructor_change or unresolved_constructor_change:
             counter += 1
             findings.append(
                 _build_finding(
@@ -2456,8 +2614,8 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
                     confidence="low",
                     title="Changed Python constructor requires manual review",
                     why=(
-                        "A public __init__ changed, but Bumpkin could not uniquely match it to a "
-                        "single class from the workspace context."
+                        "A public __init__ changed, but Bumpkin could not confidently resolve it "
+                        "to a single class from the available analysis context."
                     ),
                     path=file_diff.path,
                     snippet=next(
@@ -2523,8 +2681,17 @@ def detect_python_api_findings(diff_text: str) -> list[Finding]:
     return findings
 
 
-def detect_semver_findings(diff_text: str) -> list[Finding]:
+def detect_semver_findings(
+    diff_text: str,
+    *,
+    workspace_loader: WorkspaceLoader | None = None,
+) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(detect_js_ts_export_findings(diff_text))
-    findings.extend(detect_python_api_findings(diff_text))
+    findings.extend(
+        detect_python_api_findings(
+            diff_text,
+            workspace_loader=workspace_loader,
+        )
+    )
     return _reindex_findings(findings)

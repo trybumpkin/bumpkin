@@ -1,12 +1,18 @@
+from collections.abc import Callable
 from pathlib import Path
 
 from findings import (
     Finding,
     aggregate_findings,
+    build_filesystem_workspace_loader,
     detect_js_ts_export_findings,
     detect_python_api_findings,
     detect_semver_findings,
 )
+
+
+def _workspace_loader(root: Path) -> Callable[[str], list[str] | None]:
+    return build_filesystem_workspace_loader(root)
 
 
 def test_detect_findings_removed_export_is_major() -> None:
@@ -536,6 +542,7 @@ def test_detect_python_findings_does_not_suppress_real_additions_with_workspace_
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
@@ -551,7 +558,7 @@ diff --git a/pkg/api.py b/pkg/api.py
 +
  def public_api() -> str:
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_added" for finding in findings)
     assert any("DEFAULT_TIMEOUT" in finding.title for finding in findings)
@@ -572,6 +579,29 @@ diff --git a/pkg/api.py b/pkg/api.py
 
     assert any(finding.rule == "python_all_unresolved" for finding in findings)
     assert any(finding.severity == "MANUAL_REVIEW" for finding in findings)
+
+
+def test_detect_python_findings_keeps_deterministic_changes_alongside_unresolved___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,6 +1,6 @@
+ __all__ = compute_exports("v1")
+
+-def public_api(x: int = 1) -> int:
++def public_api(x: int) -> int:
+     return x
+
+ def helper():
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_all_unresolved" for finding in findings)
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_does_not_promote_helper_changes_when___all___is_dynamic() -> None:
@@ -599,6 +629,7 @@ def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
@@ -618,7 +649,7 @@ diff --git a/pkg/api.py b/pkg/api.py
 +def helper(value: str) -> str:
      return value
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert findings == []
 
@@ -628,6 +659,7 @@ def test_detect_python_findings_infers_constructor_class_from_workspace(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
@@ -649,7 +681,7 @@ diff --git a/pkg/api.py b/pkg/api.py
 +    def __init__(self, count: int):
          self.count = count
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_signature_requiredness_tightening" for finding in findings)
     assert any("Example.__init__" in finding.title for finding in findings)
@@ -677,6 +709,7 @@ def test_detect_python_findings_detects_api_module_reexport_rename_without___all
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -693,7 +726,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 -from .client import Client
 +from .client import ServiceClient
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("Client" in finding.title for finding in findings)
@@ -743,6 +776,7 @@ def test_detect_python_findings_detects_absolute_api_module_reexport_rename(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -759,7 +793,7 @@ diff --git a/pkg/api.py b/pkg/api.py
 -from pkg.client import Client
 +from pkg.client import ServiceClient
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("Client" in finding.title for finding in findings)
@@ -772,6 +806,7 @@ def test_detect_python_findings_detects_nested_src_absolute_api_reexport_rename(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "src" / "myorg" / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -788,7 +823,7 @@ diff --git a/src/myorg/pkg/api.py b/src/myorg/pkg/api.py
 -from myorg.pkg.client import Client
 +from myorg.pkg.client import ServiceClient
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("Client" in finding.title for finding in findings)
@@ -801,6 +836,7 @@ def test_detect_python_findings_detects_absolute_api_module_reexport_rename_in_s
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "src" / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -817,7 +853,7 @@ diff --git a/src/pkg/api.py b/src/pkg/api.py
 -from pkg.client import Client
 +from pkg.client import ServiceClient
 """
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("Client" in finding.title for finding in findings)
@@ -923,6 +959,7 @@ diff --git a/pkg/models.py b/pkg/models.py
 def test_detect_python_findings_detects_removed_export_with_workspace___all___outside_hunk(
     tmp_path: Path,
 ) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -940,7 +977,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
      return 1
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any("public_api" in finding.title for finding in findings)
@@ -949,6 +986,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 def test_detect_python_findings_detects_constructor_tightening_when_body_anchor_changes(
     tmp_path: Path,
 ) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -966,7 +1004,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +        self.value = int(x)
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
         finding.rule == "export_signature_requiredness_tightening" and "A.__init__" in finding.title
@@ -1021,6 +1059,7 @@ diff --git a/pkg/api.py b/pkg/api.py
 def test_detect_python_findings_requests_manual_review_for_ambiguous_constructor_match(
     tmp_path: Path,
 ) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -1039,7 +1078,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +        self.value = int(x)
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "python_constructor_ambiguous" for finding in findings)
 
@@ -1047,6 +1086,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 def test_detect_python_findings_keeps_ambiguous_constructor_review_alongside_other_findings(
     tmp_path: Path,
 ) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -1068,7 +1108,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +    return 1
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
         finding.rule == "export_symbol_added" and "public_api" in finding.title
@@ -1234,6 +1274,7 @@ def test_detect_python_findings_requests_manual_review_for_internal_helpers_in_r
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -1255,7 +1296,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
      return x
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(finding.rule == "python_api_module_local_surface_changed" for finding in findings)
     assert any("helper" in finding.title for finding in findings)
@@ -1266,6 +1307,7 @@ def test_detect_python_findings_detects_added_public_submodule_symbol_even_when_
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -1286,7 +1328,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +    return 2
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
         finding.rule == "export_symbol_added" and "new_api" in finding.title for finding in findings
@@ -1298,6 +1340,7 @@ def test_detect_python_findings_requests_manual_review_for_local_api_change_in_r
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -1320,7 +1363,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
      return flag
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
         finding.rule == "python_api_module_local_surface_changed"
@@ -1352,6 +1395,7 @@ def test_detect_python_findings_ignores_regular_module_relative_import_churn(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     target = package_dir / "models.py"
@@ -1365,7 +1409,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +from .types import UserKey
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert findings == []
 
@@ -1383,6 +1427,31 @@ diff --git a/pkg/__init__.py b/pkg/__init__.py
     findings = detect_python_api_findings(diff_text)
 
     assert any(finding.rule == "python_star_reexport_changed" for finding in findings)
+
+
+def test_detect_python_findings_keeps_deterministic_changes_alongside_star_reexport_review() -> (
+    None
+):
+    diff_text = """
+diff --git a/pkg/__init__.py b/pkg/__init__.py
+--- a/pkg/__init__.py
++++ b/pkg/__init__.py
+@@ -1,4 +1,4 @@
+-from .api import *
++from .compat import *
+
+-def public_api(x: int = 1) -> int:
++def public_api(x: int) -> int:
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_star_reexport_changed" for finding in findings)
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_treats_keyword_only_to_optional_positional_as_compatible() -> None:
@@ -1450,6 +1519,7 @@ def test_detect_python_findings_detects_api_module_alias_reexport_rename_with_ro
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
@@ -1470,7 +1540,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +from .client import ServiceClient as ServiceClient
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
         finding.rule == "export_symbol_removed" and "Client" in finding.title
@@ -1485,6 +1555,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 def test_detect_python_findings_ignores_internal_classes_outside_workspace___all__(
     tmp_path: Path,
 ) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
     target = tmp_path / "pkg" / "api.py"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -1499,9 +1570,42 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 +    pass
 """
 
-    findings = detect_python_api_findings(diff_text)
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert findings == []
+
+
+def test_detect_python_findings_does_not_read_live_workspace_by_default(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "class A:\n    def __init__(self, x=1):\n        self.value = int(x)\n\n"
+        "class B:\n    def __init__(self, x=1):\n        self.value = int(x)\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,2 +2,2 @@
+-    def __init__(self, x=1):
++    def __init__(self, x):
+     self.value = int(x)
+"""
+
+    baseline = detect_python_api_findings(diff_text)
+    target.write_text(
+        "class A:\n    def __init__(self, x=1):\n        self.value = int(x)\n",
+        encoding="utf-8",
+    )
+    changed = detect_python_api_findings(diff_text)
+
+    assert [(finding.rule, finding.title) for finding in changed] == [
+        (finding.rule, finding.title) for finding in baseline
+    ]
+    assert any(finding.rule == "python_constructor_ambiguous" for finding in baseline)
 
 
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
