@@ -2819,6 +2819,54 @@ def detect_python_api_findings(
                     counter=counter,
                 )
             )
+        stable_local_api_surface_names = {
+            name
+            for name in (removed_local_public_names & added_local_public_names)
+            if name.lower() not in {"helper", "helpers", "util", "utils"}
+        }
+        unresolved_api_import_surface_symbols = sorted(
+            symbol
+            for symbol in (removed_import_public_names ^ added_import_public_names)
+            if _is_python_api_surface(file_diff.path)
+            and workspace_explicit_exports is None
+            and not removed_has_explicit_all
+            and not added_has_explicit_all
+            and not stable_local_api_surface_names
+            and symbol not in removed_exports
+            and symbol not in added_exports
+        )
+        if unresolved_api_import_surface_symbols:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MANUAL_REVIEW",
+                    rule="python_api_module_import_surface_changed",
+                    confidence="low",
+                    title=(
+                        "Changed api.py import-surface candidate requires manual review: "
+                        f"{', '.join(unresolved_api_import_surface_symbols[:3])}"
+                    ),
+                    why=(
+                        "This api.py module changed imported top-level symbols without stronger "
+                        "export evidence. Bumpkin cannot deterministically tell whether those "
+                        "imports are part of the public submodule API or internal wiring."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if any(
+                                symbol in line for symbol in unresolved_api_import_surface_symbols
+                            )
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
+                    counter=counter,
+                )
+            )
         workspace_public_classes = workspace_public_names or set()
         shared_symbols = sorted(
             symbol

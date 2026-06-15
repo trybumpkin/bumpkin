@@ -108,6 +108,8 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
     evidence = finding.evidence
     if not evidence:
         return "unknown"
+    if finding.rule == "python_requires_floor_raised":
+        return "public"
     first = evidence[0]
     path = str(first.get("path", "")).strip()
     if not path:

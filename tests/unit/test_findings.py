@@ -1782,6 +1782,41 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     )
 
 
+def test_detect_python_findings_requests_manual_review_for_mixed_api_import_surface_rename(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    target = package_dir / "api.py"
+    target.write_text(
+        "from .client import ServiceClient\n\n\ndef helper() -> int:\n    return 1\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,4 +1,4 @@
+-from .client import Client
++from .client import ServiceClient
+
+
+ def helper() -> int:
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "python_api_module_import_surface_changed"
+        and "Client" in finding.title
+        and "ServiceClient" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_detects_reexported_private_helper_in_non_api_module(
     tmp_path: Path,
     monkeypatch,
