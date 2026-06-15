@@ -284,19 +284,25 @@ def _is_python_path(path: str) -> bool:
     return normalized.endswith(PYTHON_EXTENSIONS)
 
 
-def _is_root_pyproject(path: str) -> bool:
-    normalized = path.strip().replace("\\", "/").lower()
-    return normalized == "pyproject.toml"
+def _python_packaging_metadata_kind(path: str) -> str | None:
+    normalized = path.strip().replace("\\", "/").strip("/").lower()
+    if not normalized:
+        return None
+    filename = normalized.rsplit("/", 1)[-1]
+    if filename in {"pyproject.toml", "setup.cfg", "setup.py"}:
+        return filename
+    return None
 
 
-def _is_root_setup_cfg(path: str) -> bool:
-    normalized = path.strip().replace("\\", "/").lower()
-    return normalized == "setup.cfg"
-
-
-def _is_root_setup_py(path: str) -> bool:
-    normalized = path.strip().replace("\\", "/").lower()
-    return normalized == "setup.py"
+def _is_supported_python_packaging_metadata_path(path: str) -> bool:
+    metadata_kind = _python_packaging_metadata_kind(path)
+    if metadata_kind is None:
+        return False
+    normalized = path.strip().replace("\\", "/").strip("/").lower()
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) == 1:
+        return True
+    return any(part in PYTHON_SOURCE_ROOT_NAMES for part in parts[:-1])
 
 
 def _is_python_reexport_surface(path: str) -> bool:
@@ -336,7 +342,7 @@ def _is_obviously_internal_python_path(path: str) -> bool:
     }
     if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
         return True
-    internal_stems = {"conftest", "helper", "helpers", "util", "utils"}
+    internal_stems = {"conftest", "helper", "helpers", "internal", "util", "utils"}
     return stem in internal_stems or stem.startswith("test_") or stem.endswith("_test")
 
 
@@ -346,8 +352,6 @@ def _allows_python_implicit_public_surface(
     workspace_api_reexport_names: set[str] | None,
 ) -> bool:
     if _is_python_reexport_surface(path) or _is_python_api_surface(path):
-        return True
-    if workspace_api_reexport_names:
         return True
     return not _is_obviously_internal_python_path(path)
 
@@ -1803,7 +1807,11 @@ def _extract_setup_py_python_requires_floor(lines: list[str]) -> tuple[int, ...]
 
 
 def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ...] | None:
-    if _is_root_setup_cfg(path):
+    if not _is_supported_python_packaging_metadata_path(path):
+        return None
+
+    metadata_kind = _python_packaging_metadata_kind(path)
+    if metadata_kind == "setup.cfg":
         for line in lines:
             match = SETUP_CFG_PYTHON_REQUIRES_PATTERN.search(line)
             if not match:
@@ -1813,11 +1821,8 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
                 return floor
         return None
 
-    if _is_root_setup_py(path):
+    if metadata_kind == "setup.py":
         return _extract_setup_py_python_requires_floor(lines)
-
-    if not _is_root_pyproject(path):
-        return None
 
     current_section: str | None = None
     for line in lines:
@@ -2451,11 +2456,7 @@ def detect_python_api_findings(
         removed_floor = _extract_requires_python_floor(file_diff.path, removed_version_lines)
         added_floor = _extract_requires_python_floor(file_diff.path, added_version_lines)
         if (
-            (
-                _is_root_pyproject(file_diff.path)
-                or _is_root_setup_cfg(file_diff.path)
-                or _is_root_setup_py(file_diff.path)
-            )
+            _is_supported_python_packaging_metadata_path(file_diff.path)
             and added_floor is not None
             and (removed_floor is None or added_floor > removed_floor)
         ):

@@ -190,7 +190,7 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert findings[0].severity == "MAJOR"
 
 
-def test_detect_python_findings_ignores_nested_pyproject_floor_raise() -> None:
+def test_detect_python_findings_ignores_non_source_root_nested_pyproject_floor_raise() -> None:
     diff_text = """
 diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pyproject.toml
 --- a/packages/internal-tool/pyproject.toml
@@ -202,6 +202,39 @@ diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pypr
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_support_floor_raise_in_python_source_root_pyproject() -> None:
+    diff_text = """
+diff --git a/python/acme/pyproject.toml b/python/acme/pyproject.toml
+--- a/python/acme/pyproject.toml
++++ b/python/acme/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_in_lib_source_root_setup_cfg() -> None:
+    diff_text = """
+diff --git a/lib/demo/setup.cfg b/lib/demo/setup.cfg
+--- a/lib/demo/setup.cfg
++++ b/lib/demo/setup.cfg
+@@ -1,2 +1,2 @@
+ [options]
+-python_requires = >=3.9
++python_requires = >=3.10
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
 
 
 def test_detect_python_findings_support_floor_raise_in_root_setup_cfg() -> None:
@@ -2538,6 +2571,37 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
         finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
         for finding in findings
     )
+
+
+def test_detect_python_findings_keeps_internal_modules_internal_despite_package_reexports(
+    tmp_path: Path,
+) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .client import public_api\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "internal.py"
+    target.write_text(
+        "def helper(timeout: int = 1) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    rel = target.relative_to(tmp_path).as_posix()
+    diff_text = f"""
+diff --git a/{rel} b/{rel}
+--- a/{rel}
++++ b/{rel}
+@@ -1,2 +1,2 @@
+-def helper(timeout: int = 1) -> int:
++def helper(timeout: int) -> int:
+     return timeout
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert findings == []
 
 
 def test_build_filesystem_workspace_loader_blocks_parent_escape(tmp_path: Path) -> None:
