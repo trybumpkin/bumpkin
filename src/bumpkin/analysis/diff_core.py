@@ -231,6 +231,18 @@ def dedupe_preserve_order(items: list[str]) -> list[str]:
     return deduped
 
 
+def _resolve_repo_root(
+    repository_root_fn: Callable[[], str],
+    *,
+    notes: list[str],
+) -> str | None:
+    try:
+        return repository_root_fn()
+    except RuntimeError:
+        notes.append("Repository root lookup was unavailable; continuing without repo_root.")
+        return None
+
+
 def build_diff(
     from_ref: str,
     to_ref: str,
@@ -254,7 +266,6 @@ def build_diff(
 ) -> DiffResult:
     ignores = list(ignore_patterns or DEFAULT_IGNORES)
     notes: list[str] = []
-    repo_root = repository_root_fn()
 
     changed = changed_files_fn(from_ref, to_ref)
     allowlist = {
@@ -282,10 +293,10 @@ def build_diff(
 
     if not kept:
         notes.append("Only ignored files changed; defaulting to NO_BUMP recommendation.")
+        repo_root = _resolve_repo_root(repository_root_fn, notes=notes)
         return DiffResult(
             from_ref=from_ref,
             to_ref=to_ref,
-            repo_root=repo_root,
             diff_text="",
             full_diff_text="",
             truncated=False,
@@ -301,6 +312,7 @@ def build_diff(
             scope_unexpected_files=len(unexpected_paths),
             scope_missing_files=scope_missing_files,
             notes=notes,
+            repo_root=repo_root,
         )
 
     preprocessor_notes: list[str] = []
@@ -357,11 +369,11 @@ def build_diff(
 
     notes.append(f"Analyzed {len(kept)} file(s) after filtering.")
     notes.append(f"Approx. prompt tokens: {approx_prompt_tokens}")
+    repo_root = _resolve_repo_root(repository_root_fn, notes=notes)
 
     return DiffResult(
         from_ref=from_ref,
         to_ref=to_ref,
-        repo_root=repo_root,
         diff_text=model_diff_text,
         full_diff_text=full_diff_text,
         truncated=truncated,
@@ -377,4 +389,5 @@ def build_diff(
         scope_unexpected_files=len(unexpected_paths),
         scope_missing_files=scope_missing_files,
         notes=notes,
+        repo_root=repo_root,
     )

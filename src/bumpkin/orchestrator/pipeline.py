@@ -174,7 +174,7 @@ def run(args: Namespace) -> int:
     elif len(detected_language_groups) == 0:
         prompt_language_group = "generic"
     else:
-        prompt_language_group = None
+        prompt_language_group = "generic"
     prompt_metadata = get_prompt_metadata(language_group=prompt_language_group)
     if len(detected_language_groups) > 1:
         notes.append(

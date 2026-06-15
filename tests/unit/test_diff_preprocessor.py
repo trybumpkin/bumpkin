@@ -73,6 +73,33 @@ def test_build_diff_respects_extended_default_ignores(monkeypatch) -> None:
     assert result.ignored_files_total == 2
 
 
+def test_build_diff_does_not_require_repo_root_before_injected_helpers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        diff,
+        "_changed_files",
+        lambda _from, _to: ["src/app.ts"],
+    )
+    monkeypatch.setattr(
+        diff,
+        "_build_diff_text",
+        lambda from_ref, to_ref, files, use_difftastic: (
+            "diff --git a/src/app.ts b/src/app.ts\n+export const x = 1\n",
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        diff,
+        "_repository_root",
+        lambda: (_ for _ in ()).throw(RuntimeError("not a git checkout")),
+    )
+
+    result = diff.build_diff("a", "b")
+
+    assert result.repo_root is None
+    assert result.analyzed_files == ["src/app.ts"]
+    assert any("continuing without repo_root" in note for note in result.notes)
+
+
 def test_diff_result_keeps_backward_compatible_positional_constructor() -> None:
     result = diff.DiffResult(
         "base",
