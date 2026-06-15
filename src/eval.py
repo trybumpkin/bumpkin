@@ -230,6 +230,7 @@ def _build_fixture_diff_result(case: FixtureCase) -> DiffResult:
     return DiffResult(
         from_ref=f"fixture/{case.name}/base",
         to_ref=f"fixture/{case.name}/head",
+        repo_root=None,
         diff_text=full_diff_text,
         full_diff_text=full_diff_text,
         truncated=False,

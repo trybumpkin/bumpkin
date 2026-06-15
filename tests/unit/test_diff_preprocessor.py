@@ -47,6 +47,7 @@ def test_cap_diff_per_file_limits_large_section() -> None:
 
 
 def test_build_diff_respects_extended_default_ignores(monkeypatch) -> None:
+    monkeypatch.setattr(diff, "_repository_root", lambda: "C:/repo-root")
     monkeypatch.setattr(
         diff,
         "_changed_files",
@@ -66,6 +67,7 @@ def test_build_diff_respects_extended_default_ignores(monkeypatch) -> None:
     )
 
     result = diff.build_diff("a", "b")
+    assert result.repo_root == "C:/repo-root"
     assert result.analyzed_files == ["src/app.ts"]
     assert result.changed_files_total == 3
     assert result.ignored_files_total == 2

@@ -1674,7 +1674,7 @@ def analyze_diff_core(
     findings = (
         detect_semver_findings(
             diff_result.full_diff_text,
-            workspace_loader=build_filesystem_workspace_loader(),
+            workspace_loader=build_filesystem_workspace_loader(diff_result.repo_root),
         )
         if diff_result.full_diff_text and not scope_mismatch_detected
         else []

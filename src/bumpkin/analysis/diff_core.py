@@ -42,6 +42,7 @@ class DiffUnit:
 class DiffResult:
     from_ref: str
     to_ref: str
+    repo_root: str | None
     diff_text: str
     full_diff_text: str
     truncated: bool
@@ -81,6 +82,10 @@ def latest_tag(run_git_fn: Callable[[list[str]], str] = run_git) -> str | None:
 
 def initial_commit(run_git_fn: Callable[[list[str]], str] = run_git) -> str:
     return run_git_fn(["rev-list", "--max-parents=0", "HEAD"]).splitlines()[0].strip()
+
+
+def repository_root(run_git_fn: Callable[[list[str]], str] = run_git) -> str:
+    return run_git_fn(["rev-parse", "--show-toplevel"]).strip()
 
 
 def resolve_refs(
@@ -245,9 +250,11 @@ def build_diff(
     estimate_tokens_fn: Callable[[str], int] = estimate_tokens,
     truncate_fn: Callable[[str, int], tuple[str, bool]] = truncate,
     dedupe_preserve_order_fn: Callable[[list[str]], list[str]] = dedupe_preserve_order,
+    repository_root_fn: Callable[[], str] = repository_root,
 ) -> DiffResult:
     ignores = list(ignore_patterns or DEFAULT_IGNORES)
     notes: list[str] = []
+    repo_root = repository_root_fn()
 
     changed = changed_files_fn(from_ref, to_ref)
     allowlist = {
@@ -278,6 +285,7 @@ def build_diff(
         return DiffResult(
             from_ref=from_ref,
             to_ref=to_ref,
+            repo_root=repo_root,
             diff_text="",
             full_diff_text="",
             truncated=False,
@@ -353,6 +361,7 @@ def build_diff(
     return DiffResult(
         from_ref=from_ref,
         to_ref=to_ref,
+        repo_root=repo_root,
         diff_text=model_diff_text,
         full_diff_text=full_diff_text,
         truncated=truncated,

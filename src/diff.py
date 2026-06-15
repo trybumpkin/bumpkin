@@ -26,6 +26,10 @@ def _initial_commit() -> str:
     return diff_core.initial_commit(run_git_fn=_run_git)
 
 
+def _repository_root() -> str:
+    return diff_core.repository_root(run_git_fn=_run_git)
+
+
 def resolve_refs(from_ref: str | None, to_ref: str | None) -> tuple[str, str, list[str]]:
     return diff_core.resolve_refs(
         from_ref,
@@ -109,4 +113,5 @@ def build_diff(
         estimate_tokens_fn=_estimate_tokens,
         truncate_fn=_truncate,
         dedupe_preserve_order_fn=_dedupe_preserve_order,
+        repository_root_fn=_repository_root,
     )
