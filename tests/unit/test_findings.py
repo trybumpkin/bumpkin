@@ -479,6 +479,44 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_staticmethod_to_instance_binding_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,3 @@
+ class Client:
+-    @staticmethod
+     def parse(value: str) -> str:
+         return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_method_binding_changed" and "Client.parse" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_classmethod_to_instance_binding_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,3 @@
+ class Client:
+-    @classmethod
+     def parse(cls, value: str) -> str:
+         return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_method_binding_changed" and "Client.parse" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_detects_nested_public_class_method_tightening() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1492,6 +1530,40 @@ diff --git a/pkg/__init__.pyi b/pkg/__init__.pyi
 @@ -1,1 +1,1 @@
 -from .client import Client
 +from .client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_root_api_absolute_import_alias_rename() -> None:
+    diff_text = """
+diff --git a/api.py b/api.py
+--- a/api.py
++++ b/api.py
+@@ -1,1 +1,1 @@
+-import project.client as Client
++import project.client as ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_src_api_absolute_import_alias_rename() -> None:
+    diff_text = """
+diff --git a/src/api.py b/src/api.py
+--- a/src/api.py
++++ b/src/api.py
+@@ -1,1 +1,1 @@
+-import src.client as Client
++import src.client as ServiceClient
 """
     findings = detect_python_api_findings(diff_text)
 

@@ -114,6 +114,7 @@ class _FunctionSignature:
     return_type: str | None
     is_async: bool
     source: str
+    method_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -139,11 +140,17 @@ def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) 
         left.params == right.params
         and left.return_type == right.return_type
         and left.is_async == right.is_async
+        and left.method_kind == right.method_kind
     )
 
 
-def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None, str]:
-    return (signature.params, signature.return_type, "async" if signature.is_async else "sync")
+def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None, str, str | None]:
+    return (
+        signature.params,
+        signature.return_type,
+        "async" if signature.is_async else "sync",
+        signature.method_kind,
+    )
 
 
 def _python_symbol_roots(symbol: str) -> tuple[str, str]:
@@ -590,10 +597,12 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
                 exports.add(exported_name)
     elif isinstance(statement, ast.Import):
         for alias in statement.names:
-            if (
-                alias.asname is None
-                or package_root is None
-                or not (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            if alias.asname is None or not (
+                _is_python_api_surface(path)
+                or (
+                    package_root is not None
+                    and (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+                )
             ):
                 continue
             exported_name = alias.asname
@@ -624,10 +633,12 @@ def _extract_python_explicit_import_alias_names(statement_source: str, *, path: 
     elif isinstance(statement, ast.Import):
         package_root = _python_package_root(path)
         for alias in statement.names:
-            if (
-                alias.asname is None
-                or package_root is None
-                or not (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            if alias.asname is None or not (
+                _is_python_api_surface(path)
+                or (
+                    package_root is not None
+                    and (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+                )
             ):
                 continue
             if not alias.asname.startswith("_"):
@@ -641,6 +652,7 @@ def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> b
         isinstance(statement, ast.ImportFrom)
         and (
             statement.level > 0
+            or _is_python_api_surface(path)
             or (
                 statement.module is not None
                 and package_root is not None
@@ -652,10 +664,15 @@ def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> b
         )
     ) or (
         isinstance(statement, ast.Import)
-        and package_root is not None
         and any(
             alias.asname is not None
-            and (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+            and (
+                _is_python_api_surface(path)
+                or (
+                    package_root is not None
+                    and (alias.name == package_root or alias.name.startswith(f"{package_root}."))
+                )
+            )
             for alias in statement.names
         )
     )
@@ -1410,6 +1427,28 @@ def _strip_python_inline_comment(line: str) -> str:
     return line.split("#", 1)[0].rstrip()
 
 
+def _collect_python_decorator_names(
+    version_lines: list[tuple[str, bool]],
+    def_index: int,
+) -> set[str]:
+    decorators: set[str] = set()
+    def_line = version_lines[def_index][0]
+    def_indent = _python_indent_level(def_line)
+    cursor = def_index - 1
+    while cursor >= 0:
+        line = version_lines[cursor][0]
+        stripped = line.strip()
+        if not stripped:
+            break
+        if _python_indent_level(line) != def_indent or not stripped.startswith("@"):
+            break
+        decorator_name = stripped[1:].split("(", 1)[0].strip()
+        if decorator_name:
+            decorators.add(decorator_name.split(".")[-1])
+        cursor -= 1
+    return decorators
+
+
 def _extract_python_signatures(
     file_diff: _FileDiff,
     *,
@@ -1441,6 +1480,7 @@ def _extract_python_signatures(
         if not def_start:
             index += 1
             continue
+        signature_start_index = index
         signature_source, _block_is_target, index = _collect_python_signature_block(
             version_lines,
             index,
@@ -1453,6 +1493,7 @@ def _extract_python_signatures(
         params = re.sub(r"\s+", "", def_match.group(2))
         return_type = _normalize_type(def_match.group(3))
         is_async = signature_source.lstrip().startswith("async def ")
+        decorators = _collect_python_decorator_names(version_lines, signature_start_index)
         next_body_line: str | None = None
         if index < len(version_lines):
             candidate = version_lines[index][0]
@@ -1488,10 +1529,17 @@ def _extract_python_signatures(
                 if not inferred_class:
                     continue
                 symbol_name = f"{inferred_class}.{name}"
+            if "staticmethod" in decorators:
+                method_kind = "staticmethod"
+            elif "classmethod" in decorators:
+                method_kind = "classmethod"
+            else:
+                method_kind = "instance"
         else:
             if indent > 0:
                 continue
             symbol_name = name
+            method_kind = None
 
         signature = _FunctionSignature(
             name=symbol_name,
@@ -1499,6 +1547,7 @@ def _extract_python_signatures(
             return_type=return_type,
             is_async=is_async,
             source=signature_source,
+            method_kind=method_kind,
         )
         signatures.setdefault(symbol_name, []).append(signature)
 
@@ -2699,8 +2748,15 @@ def detect_python_api_findings(
             new_return = new_sigs[0].return_type
             old_async = old_sigs[0].is_async
             new_async = new_sigs[0].is_async
+            old_method_kind = old_sigs[0].method_kind
+            new_method_kind = new_sigs[0].method_kind
 
-            if old_params == new_params and old_return == new_return and old_async == new_async:
+            if (
+                old_params == new_params
+                and old_return == new_return
+                and old_async == new_async
+                and old_method_kind == new_method_kind
+            ):
                 continue
 
             if old_async != new_async:
@@ -2714,6 +2770,25 @@ def detect_python_api_findings(
                         why=(
                             "Switching between async and sync changes how callers must invoke "
                             "the public Python callable."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
+                continue
+
+            if old_method_kind != new_method_kind:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_method_binding_changed",
+                        confidence="high",
+                        title=f"Public Python method binding changed: {symbol}",
+                        why=(
+                            "Changing whether a public method is bound as an instance, class, "
+                            "or static method changes how downstream callers must invoke it."
                         ),
                         path=file_diff.path,
                         snippet=new_sigs[0].source,
