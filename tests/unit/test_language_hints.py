@@ -22,3 +22,8 @@ def test_detect_language_groups_treats_stub_files_as_python() -> None:
 def test_detect_language_groups_treats_python_packaging_metadata_as_python() -> None:
     groups = detect_language_groups(["pyproject.toml", "setup.cfg", "setup.py"])
     assert groups == ["python"]
+
+
+def test_detect_language_groups_treats_python_source_root_metadata_as_python() -> None:
+    groups = detect_language_groups(["python/acme/pyproject.toml", "lib/demo/setup.cfg"])
+    assert groups == ["python"]

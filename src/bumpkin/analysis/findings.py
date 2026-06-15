@@ -17,6 +17,7 @@ CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
 PYTHON_EXTENSIONS = (".py", ".pyi")
+PYTHON_SOURCE_ROOT_NAMES = {"src", "python", "lib"}
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
     r"""^\s*requires-python\s*=\s*["']([^"']+)["']""",
@@ -393,12 +394,38 @@ def _python_package_root(path: str) -> str | None:
     if len(parts) < 2:
         return None
     package_parts = parts[:-1]
-    if parts[0] == "src" and len(parts) >= 3:
+    if parts[0] in PYTHON_SOURCE_ROOT_NAMES and len(parts) >= 3:
         package_parts = parts[1:-1]
     if not package_parts:
         return None
     package_root = ".".join(package_parts)
     return package_root or None
+
+
+def _python_module_candidates(path: str) -> set[str]:
+    normalized = path.strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return set()
+    parts = normalized.split("/")
+    if not parts:
+        return set()
+    module_parts = [*parts[:-1], Path(parts[-1]).stem]
+    candidates = {".".join(module_parts)}
+    if module_parts and module_parts[0] in PYTHON_SOURCE_ROOT_NAMES and len(module_parts) >= 2:
+        candidates.add(".".join(module_parts[1:]))
+    return {candidate for candidate in candidates if candidate}
+
+
+def _python_relative_module_from_ancestor(path: Path, ancestor_dir: Path) -> str | None:
+    try:
+        relative = path.relative_to(ancestor_dir)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if not parts:
+        return None
+    module_parts = [*parts[:-1], Path(parts[-1]).stem]
+    return ".".join(part for part in module_parts if part) or None
 
 
 def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
@@ -823,55 +850,58 @@ def _workspace_python_api_reexport_names(
     if raw_path.name.lower().startswith("__init__.py"):
         return None
 
-    init_candidates = (
-        (raw_path.parent / "__init__.pyi", raw_path.parent / "__init__.py")
-        if raw_path.suffix.lower() == ".pyi"
-        else (raw_path.parent / "__init__.py", raw_path.parent / "__init__.pyi")
-    )
-    init_sources = [
-        lines
-        for init_path in init_candidates
-        if (
-            lines := _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
-        )
-        is not None
-    ]
-    if not init_sources:
-        return set()
-
-    package_root = _python_package_root(path)
+    module_candidates = _python_module_candidates(path)
     exports: set[str] = set()
-    for lines in init_sources:
-        index = 0
-        while index < len(lines):
-            line = lines[index]
-            if not _is_python_top_level_statement(line):
-                index += 1
-                continue
-            if not PYTHON_IMPORT_START_PATTERN.search(line):
-                index += 1
-                continue
-
-            statement_source, index = _collect_python_import_statement(lines, index)
-            try:
-                module = ast.parse(statement_source)
-            except SyntaxError:
-                continue
-            if len(module.body) != 1 or not isinstance(module.body[0], ast.ImportFrom):
-                continue
-
-            statement = module.body[0]
-            module_name = raw_path.stem
-            is_module_reexport = (statement.level > 0 and statement.module == module_name) or (
-                statement.module is not None
-                and package_root is not None
-                and statement.module == f"{package_root}.{module_name}"
+    for ancestor_dir in raw_path.parents:
+        if str(ancestor_dir) in {"", "."}:
+            continue
+        init_candidates = (
+            (ancestor_dir / "__init__.pyi", ancestor_dir / "__init__.py")
+            if raw_path.suffix.lower() == ".pyi"
+            else (ancestor_dir / "__init__.py", ancestor_dir / "__init__.pyi")
+        )
+        init_sources = [
+            (init_path, lines)
+            for init_path in init_candidates
+            if (
+                lines := _read_workspace_python_lines(
+                    str(init_path), workspace_loader=workspace_loader
+                )
             )
-            if not is_module_reexport:
-                continue
-            if any(alias.name == "*" for alias in statement.names):
-                return None
-            exports.update(alias.name for alias in statement.names if alias.name != "*")
+            is not None
+        ]
+        for init_path, lines in init_sources:
+            relative_target = _python_relative_module_from_ancestor(raw_path, init_path.parent)
+            index = 0
+            while index < len(lines):
+                line = lines[index]
+                if not _is_python_top_level_statement(line):
+                    index += 1
+                    continue
+                if not PYTHON_IMPORT_START_PATTERN.search(line):
+                    index += 1
+                    continue
+
+                statement_source, index = _collect_python_import_statement(lines, index)
+                try:
+                    module = ast.parse(statement_source)
+                except SyntaxError:
+                    continue
+                if len(module.body) != 1 or not isinstance(module.body[0], ast.ImportFrom):
+                    continue
+
+                statement = module.body[0]
+                target_module = statement.module or ""
+                is_module_reexport = (
+                    statement.level > 0
+                    and relative_target is not None
+                    and target_module == relative_target
+                ) or (statement.module is not None and target_module in module_candidates)
+                if not is_module_reexport:
+                    continue
+                if any(alias.name == "*" for alias in statement.names):
+                    return None
+                exports.update(alias.name for alias in statement.names if alias.name != "*")
 
     return exports
 
@@ -1741,6 +1771,37 @@ def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | 
     return tuple(int(part) for part in match.group(1).split("."))
 
 
+def _extract_setup_py_python_requires_floor(lines: list[str]) -> tuple[int, ...] | None:
+    source = "\n".join(lines)
+    try:
+        module = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        func_name = None
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        if func_name != "setup":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "python_requires":
+                continue
+            try:
+                value = ast.literal_eval(keyword.value)
+            except (ValueError, SyntaxError):
+                continue
+            if not isinstance(value, str):
+                continue
+            floor = _extract_python_floor_from_constraint(value)
+            if floor is not None:
+                return floor
+    return None
+
+
 def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ...] | None:
     if _is_root_setup_cfg(path):
         for line in lines:
@@ -1753,17 +1814,7 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
         return None
 
     if _is_root_setup_py(path):
-        for line in lines:
-            stripped = line.lstrip()
-            if stripped.startswith(("#", '"', "'")):
-                continue
-            match = SETUP_PY_PYTHON_REQUIRES_PATTERN.search(line)
-            if not match:
-                continue
-            floor = _extract_python_floor_from_constraint(match.group(1))
-            if floor is not None:
-                return floor
-        return None
+        return _extract_setup_py_python_requires_floor(lines)
 
     if not _is_root_pyproject(path):
         return None
