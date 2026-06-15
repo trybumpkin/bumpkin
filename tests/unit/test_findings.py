@@ -325,6 +325,60 @@ diff --git a/{rel} b/{rel}
     )
 
 
+def test_detect_python_findings_detects_reexported_private_helper_from_api_facade(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "api.py").write_text(
+        "from .client import _create_client as Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "client.py"
+    target.write_text(
+        "def _create_client(timeout: int = 1) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    rel = target.relative_to(tmp_path).as_posix()
+    diff_text = f"""
+diff --git a/{rel} b/{rel}
+--- a/{rel}
++++ b/{rel}
+@@ -1,2 +1,2 @@
+-def _create_client(timeout: int = 1) -> int:
++def _create_client(timeout: int) -> int:
+     return timeout
+"""
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "_create_client" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_treats_pyw_diffs_as_python() -> None:
+    diff_text = """
+diff --git a/tools/release.pyw b/tools/release.pyw
+--- a/tools/release.pyw
++++ b/tools/release.pyw
+@@ -1,2 +1,2 @@
+-def public_api(timeout: int = 1) -> int:
++def public_api(timeout: int) -> int:
+     return timeout
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_ignores_setup_py_python_requires_comments() -> None:
     diff_text = """
 diff --git a/setup.py b/setup.py

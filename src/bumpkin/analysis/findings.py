@@ -16,7 +16,7 @@ SEVERITY_ORDER = {
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
-PYTHON_EXTENSIONS = (".py", ".pyi")
+PYTHON_EXTENSIONS = (".py", ".pyi", ".pyw")
 PYTHON_SOURCE_ROOT_NAMES = {"src", "python", "lib"}
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
@@ -859,23 +859,33 @@ def _workspace_python_api_reexport_names(
     for ancestor_dir in raw_path.parents:
         if str(ancestor_dir) in {"", "."}:
             continue
-        init_candidates = (
-            (ancestor_dir / "__init__.pyi", ancestor_dir / "__init__.py")
+        reexport_candidates = (
+            (
+                ancestor_dir / "__init__.pyi",
+                ancestor_dir / "__init__.py",
+                ancestor_dir / "api.pyi",
+                ancestor_dir / "api.py",
+            )
             if raw_path.suffix.lower() == ".pyi"
-            else (ancestor_dir / "__init__.py", ancestor_dir / "__init__.pyi")
+            else (
+                ancestor_dir / "__init__.py",
+                ancestor_dir / "__init__.pyi",
+                ancestor_dir / "api.py",
+                ancestor_dir / "api.pyi",
+            )
         )
-        init_sources = [
-            (init_path, lines)
-            for init_path in init_candidates
+        reexport_sources = [
+            (reexport_path, lines)
+            for reexport_path in reexport_candidates
             if (
                 lines := _read_workspace_python_lines(
-                    str(init_path), workspace_loader=workspace_loader
+                    str(reexport_path), workspace_loader=workspace_loader
                 )
             )
             is not None
         ]
-        for init_path, lines in init_sources:
-            relative_target = _python_relative_module_from_ancestor(raw_path, init_path.parent)
+        for reexport_path, lines in reexport_sources:
+            relative_target = _python_relative_module_from_ancestor(raw_path, reexport_path.parent)
             index = 0
             while index < len(lines):
                 line = lines[index]
