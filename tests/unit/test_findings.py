@@ -1552,6 +1552,44 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     )
 
 
+def test_detect_python_findings_detects_api_module_reexport_rename_with_root_subset(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import RootApi\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        "from .client import RootApi\nfrom .client import ServiceClient\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -2,1 +2,1 @@
+-from .client import Client
++from .client import ServiceClient
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_symbol_removed" and "Client" in finding.title
+        for finding in findings
+    )
+    assert any(
+        finding.rule == "export_symbol_added" and "ServiceClient" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_ignores_internal_classes_outside_workspace___all__(
     tmp_path: Path,
 ) -> None:
@@ -1606,6 +1644,17 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
         (finding.rule, finding.title) for finding in baseline
     ]
     assert any(finding.rule == "python_constructor_ambiguous" for finding in baseline)
+
+
+def test_build_filesystem_workspace_loader_blocks_parent_escape(tmp_path: Path) -> None:
+    loader = build_filesystem_workspace_loader(tmp_path)
+    outside = tmp_path.parent / "bumpkin-loader-outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    try:
+        assert loader(f"../{outside.name}") is None
+        assert loader(str(outside)) is None
+    finally:
+        outside.unlink(missing_ok=True)
 
 
 def test_detect_python_findings_respects_incremental___all___additions() -> None:

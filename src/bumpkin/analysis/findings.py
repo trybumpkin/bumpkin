@@ -202,12 +202,19 @@ def _is_python_reexport_surface(path: str) -> bool:
 def build_filesystem_workspace_loader(
     base_dir: str | Path | None = None,
 ) -> WorkspaceLoader:
-    base_path = Path(base_dir) if base_dir is not None else Path.cwd()
+    base_path = (Path(base_dir) if base_dir is not None else Path.cwd()).resolve(strict=False)
 
     def _load(path: str) -> list[str] | None:
-        resolved = Path(path)
-        if not resolved.is_absolute():
-            resolved = base_path / resolved
+        candidate = Path(path)
+        resolved = (
+            candidate.resolve(strict=False)
+            if candidate.is_absolute()
+            else (base_path / candidate).resolve(strict=False)
+        )
+        try:
+            resolved.relative_to(base_path)
+        except ValueError:
+            return None
         try:
             return resolved.read_text(encoding="utf-8").splitlines()
         except OSError:
@@ -1059,11 +1066,16 @@ def _extract_python_implicit_public_names(
     workspace_loader: WorkspaceLoader | None = None,
 ) -> set[str]:
     exports: set[str] = set()
+    candidate_lines = workspace_lines if workspace_lines is not None else lines
     allow_reexport_imports = _looks_like_python_reexport_facade(
         lines,
         path=path,
         workspace_lines=workspace_lines,
         workspace_loader=workspace_loader,
+    )
+    import_only_api_facade = _looks_like_python_import_only_facade(candidate_lines) and (
+        path.strip().replace("\\", "/").strip("/").lower() == "api.py"
+        or path.strip().replace("\\", "/").strip("/").lower().endswith("/api.py")
     )
 
     index = 0
@@ -1106,7 +1118,8 @@ def _extract_python_implicit_public_names(
                 name
                 for name in _extract_python_imported_names(statement_source, path=path)
                 if (
-                    explicit_public_names is None
+                    import_only_api_facade
+                    or explicit_public_names is None
                     or name in explicit_public_names
                     or name in explicit_alias_names
                 )
