@@ -1194,6 +1194,50 @@ diff --git a/pkg/models.py b/pkg/models.py
     assert findings == []
 
 
+def test_detect_python_findings_ignores_unexported_regular_module_signature_changes_with_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
+    target = tmp_path / "pkg" / "utils.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def helper(x):\n    return x\n", encoding="utf-8")
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,2 +1,2 @@
+-def helper(x=1):
++def helper(x):
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_test_module_signature_changes_with_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
+    target = tmp_path / "tests" / "test_utils.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def helper(x):\n    return x\n", encoding="utf-8")
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,2 +1,2 @@
+-def helper(x=1):
++def helper(x):
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert findings == []
+
+
 def test_detect_python_findings_detects_removed_export_with_workspace___all___outside_hunk(
     tmp_path: Path,
 ) -> None:
@@ -2086,6 +2130,34 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
         (finding.rule, finding.title) for finding in baseline
     ]
     assert any(finding.rule == "python_constructor_ambiguous" for finding in baseline)
+
+
+def test_detect_python_findings_keeps_implicit_public_modules_with_workspace_loader(
+    tmp_path: Path,
+) -> None:
+    workspace_loader = _workspace_loader(tmp_path)
+    target = tmp_path / "pkg" / "client.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "def public_api(timeout: int) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,2 +1,2 @@
+-def public_api(timeout: int = 1) -> int:
++def public_api(timeout: int) -> int:
+     return timeout
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "public_api" in finding.title
+        for finding in findings
+    )
 
 
 def test_build_filesystem_workspace_loader_blocks_parent_escape(tmp_path: Path) -> None:

@@ -243,6 +243,49 @@ def _is_python_api_surface(path: str) -> bool:
     return normalized in {"api.py", "api.pyi"} or normalized.endswith(("/api.py", "/api.pyi"))
 
 
+def _is_obviously_internal_python_path(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").strip("/").lower()
+    if not normalized:
+        return False
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return False
+    filename = parts[-1]
+    stem = filename.rsplit(".", 1)[0]
+    internal_dirs = {
+        "bench",
+        "benches",
+        "benchmark",
+        "benchmarks",
+        "docs",
+        "doc",
+        "example",
+        "examples",
+        "internal",
+        "internals",
+        "scripts",
+        "test",
+        "tests",
+        "testing",
+    }
+    if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
+        return True
+    internal_stems = {"conftest", "helper", "helpers", "util", "utils"}
+    return stem in internal_stems or stem.startswith("test_") or stem.endswith("_test")
+
+
+def _allows_python_implicit_public_surface(
+    path: str,
+    *,
+    workspace_api_reexport_names: set[str] | None,
+) -> bool:
+    if _is_python_reexport_surface(path) or _is_python_api_surface(path):
+        return True
+    if workspace_api_reexport_names:
+        return True
+    return not _is_obviously_internal_python_path(path)
+
+
 def build_filesystem_workspace_loader(
     base_dir: str | Path | None = None,
 ) -> WorkspaceLoader:
@@ -1278,10 +1321,13 @@ def _extract_python_public_names(
     workspace_lines: list[str] | None = None,
     explicit_public_names: set[str] | None = None,
     workspace_loader: WorkspaceLoader | None = None,
+    allow_implicit_exports: bool = True,
 ) -> set[str]:
     all_contract = _extract_python_all_contract(lines)
     if all_contract.has_explicit and all_contract.is_supported:
         return all_contract.exports
+    if not allow_implicit_exports:
+        return set()
     return _extract_python_implicit_public_names(
         lines,
         path=path,
@@ -1559,7 +1605,10 @@ def _extract_python_classes(
     *,
     has_explicit_all: bool = False,
     explicit_exports: set[str] | None = None,
+    allow_implicit_classes: bool = True,
 ) -> set[str]:
+    if not has_explicit_all and not allow_implicit_classes:
+        return set()
     classes: set[str] = set()
     for line in lines:
         if not _is_python_top_level_statement(line):
@@ -2291,6 +2340,10 @@ def detect_python_api_findings(
             file_diff.path,
             workspace_loader=workspace_loader,
         )
+        allow_implicit_public_surface = _allows_python_implicit_public_surface(
+            file_diff.path,
+            workspace_api_reexport_names=workspace_api_reexport_names,
+        )
         partial_unresolved_all_exports: set[str] = (
             _extract_python_possible_all_exports(removed_version_lines)
             | _extract_python_possible_all_exports(added_version_lines)
@@ -2318,7 +2371,7 @@ def detect_python_api_findings(
                     line.strip() for line in (*file_diff.added_lines, *file_diff.removed_lines)
                 )
             )
-            candidate_names = sorted(
+            removed_candidate_names: set[str] = (
                 _extract_python_implicit_public_names(
                     removed_version_lines,
                     path=file_diff.path,
@@ -2326,14 +2379,21 @@ def detect_python_api_findings(
                     explicit_public_names=api_explicit_public_names,
                     workspace_loader=workspace_loader,
                 )
-                | _extract_python_implicit_public_names(
+                if allow_implicit_public_surface
+                else set()
+            )
+            added_candidate_names: set[str] = (
+                _extract_python_implicit_public_names(
                     added_version_lines,
                     path=file_diff.path,
                     workspace_lines=workspace_lines,
                     explicit_public_names=api_explicit_public_names,
                     workspace_loader=workspace_loader,
                 )
+                if allow_implicit_public_surface
+                else set()
             )
+            candidate_names = sorted(removed_candidate_names | added_candidate_names)
             if candidate_names or touched_all_assignment or touched_meaningful_code:
                 counter += 1
                 findings.append(
@@ -2405,6 +2465,7 @@ def detect_python_api_findings(
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
                 workspace_loader=workspace_loader,
+                allow_implicit_exports=allow_implicit_public_surface,
             )
         )
         removed_import_bindings = _extract_python_public_import_bindings(
@@ -2425,6 +2486,7 @@ def detect_python_api_findings(
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
                 workspace_loader=workspace_loader,
+                allow_implicit_exports=allow_implicit_public_surface,
             )
         )
         added_import_bindings = _extract_python_public_import_bindings(
@@ -2451,6 +2513,7 @@ def detect_python_api_findings(
                 workspace_lines=workspace_lines,
                 explicit_public_names=api_explicit_public_names,
                 workspace_loader=workspace_loader,
+                allow_implicit_exports=allow_implicit_public_surface,
             )
             if workspace_lines is not None
             else None
@@ -2469,11 +2532,13 @@ def detect_python_api_findings(
             removed_version_lines,
             has_explicit_all=removed_has_explicit_all,
             explicit_exports=removed_all_exports,
+            allow_implicit_classes=allow_implicit_public_surface,
         )
         added_classes = _extract_python_classes(
             added_version_lines,
             has_explicit_all=added_has_explicit_all,
             explicit_exports=added_all_exports,
+            allow_implicit_classes=allow_implicit_public_surface,
         )
         if workspace_explicit_exports is not None and not touched_all_assignment:
             if not removed_has_explicit_all:
