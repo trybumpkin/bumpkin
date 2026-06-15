@@ -510,6 +510,23 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_public_class_method_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,3 @@
+ class Client:
+-    def fetch(self, user_id: str) -> dict:
++    def parse(self, user_id: str) -> dict:
+         return {"id": user_id}
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_renamed" for finding in findings)
+    assert any("Client.fetch -> Client.parse" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_staticmethod_tightening() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py

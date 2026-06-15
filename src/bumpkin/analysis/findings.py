@@ -235,6 +235,44 @@ def _match_export_renames(
     return pairs
 
 
+def _match_python_member_renames(
+    *,
+    removed_symbols: list[str],
+    added_symbols: list[str],
+    removed_signatures: dict[str, list[_FunctionSignature]],
+    added_signatures: dict[str, list[_FunctionSignature]],
+) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    used_added: set[str] = set()
+    for old_symbol in removed_symbols:
+        if "." not in old_symbol:
+            continue
+        old_root, old_container = _python_symbol_roots(old_symbol)
+        old_sigs = removed_signatures.get(old_symbol, [])
+        if not old_sigs:
+            continue
+        for new_symbol in added_symbols:
+            if new_symbol in used_added or "." not in new_symbol:
+                continue
+            new_root, new_container = _python_symbol_roots(new_symbol)
+            if old_root != new_root or old_container != new_container:
+                continue
+            new_sigs = added_signatures.get(new_symbol, [])
+            if not new_sigs:
+                continue
+            equivalent = any(
+                _signatures_equivalent(old_sig, new_sig)
+                for old_sig in old_sigs
+                for new_sig in new_sigs
+            )
+            if not equivalent:
+                continue
+            pairs.append((old_symbol, new_symbol))
+            used_added.add(new_symbol)
+            break
+    return pairs
+
+
 def _is_js_ts_path(path: str) -> bool:
     normalized = path.strip().lower()
     return normalized.endswith(JS_TS_EXTENSIONS)
@@ -2069,8 +2107,7 @@ def aggregate_findings(findings: list[Finding]) -> AggregatedFindingResult | Non
         label=label,
         confidence=confidence,
         reasoning=(
-            "Deterministic JS/TS exported API analysis produced findings with counts: "
-            f"{counts_text}."
+            f"Deterministic exported API analysis produced findings with counts: {counts_text}."
         ),
         changelog=changelog,
         aggregation_trace=trace,
@@ -2988,6 +3025,101 @@ def detect_python_api_findings(
                 )
             )
         workspace_public_classes = workspace_public_names or set()
+        removed_member_only = sorted(
+            symbol
+            for symbol in (set(removed_signatures) - set(added_signatures))
+            if _is_public_python_member_symbol(
+                symbol,
+                public_exports=shared_public_exports,
+                public_classes=workspace_public_classes,
+            )
+        )
+        added_member_only = sorted(
+            symbol
+            for symbol in (set(added_signatures) - set(removed_signatures))
+            if _is_public_python_member_symbol(
+                symbol,
+                public_exports=shared_public_exports,
+                public_classes=workspace_public_classes,
+            )
+        )
+        member_rename_pairs = _match_python_member_renames(
+            removed_symbols=removed_member_only,
+            added_symbols=added_member_only,
+            removed_signatures=removed_signatures,
+            added_signatures=added_signatures,
+        )
+        renamed_removed_members = {old_name for old_name, _ in member_rename_pairs}
+        renamed_added_members = {new_name for _, new_name in member_rename_pairs}
+        for old_name, new_name in member_rename_pairs:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_symbol_renamed",
+                    confidence="high",
+                    title=f"Renamed public Python symbol: {old_name} -> {new_name}",
+                    why=(
+                        "Renaming a public Python method removes the previous supported "
+                        "call path for downstream users."
+                    ),
+                    path=file_diff.path,
+                    snippet=f"{old_name} -> {new_name}",
+                    counter=counter,
+                )
+            )
+        removed_member_only = [
+            symbol for symbol in removed_member_only if symbol not in renamed_removed_members
+        ]
+        added_member_only = [
+            symbol for symbol in added_member_only if symbol not in renamed_added_members
+        ]
+        if removed_member_only:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_symbol_removed",
+                    confidence="high",
+                    title=f"Removed public Python symbol(s): {', '.join(removed_member_only[:3])}",
+                    why="Removing public Python methods is a breaking change for downstream users.",
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in file_diff.removed_lines
+                            if any(
+                                symbol.rsplit(".", 1)[-1] in line for symbol in removed_member_only
+                            )
+                        ),
+                        file_diff.removed_lines[0] if file_diff.removed_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
+        if added_member_only:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MINOR",
+                    rule="export_symbol_added",
+                    confidence="high",
+                    title=f"Added public Python symbol(s): {', '.join(added_member_only[:3])}",
+                    why="Adding public Python methods expands the supported API surface.",
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in file_diff.added_lines
+                            if any(
+                                symbol.rsplit(".", 1)[-1] in line for symbol in added_member_only
+                            )
+                        ),
+                        file_diff.added_lines[0] if file_diff.added_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
         shared_symbols = sorted(
             symbol
             for symbol in (set(removed_signatures) & set(added_signatures))
