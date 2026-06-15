@@ -571,6 +571,24 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_preserves_removed_exports_when___all___is_introduced() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,4 @@
++__all__ = []
++
+-def removed_api() -> int:
+-    return 1
++pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("removed_api" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_reexport_target_change_under_explicit___all__() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1511,6 +1529,42 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("Client" in finding.title for finding in findings)
     assert any(finding.rule == "export_symbol_added" for finding in findings)
     assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_prefers_stub_package_exports_for_mixed_api_pyi_modules(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "__init__.pyi").write_text(
+        "from .api import Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.pyi"
+    target.write_text(
+        "from .client import ServiceClient as Client\n\nHELPER: int\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,3 +1,3 @@
+-from .client import Client
++from .client import ServiceClient as Client
+
+ HELPER: int
+"""
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_reexport_target_changed" and "Client" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_requests_manual_review_for_internal_helpers_in_reexported_api_module(

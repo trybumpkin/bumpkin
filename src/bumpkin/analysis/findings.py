@@ -699,7 +699,12 @@ def _workspace_python_api_reexport_names(
         return None
 
     lines: list[str] | None = None
-    for init_path in (raw_path.parent / "__init__.py", raw_path.parent / "__init__.pyi"):
+    init_candidates = (
+        (raw_path.parent / "__init__.pyi", raw_path.parent / "__init__.py")
+        if raw_path.suffix.lower() == ".pyi"
+        else (raw_path.parent / "__init__.py", raw_path.parent / "__init__.pyi")
+    )
+    for init_path in init_candidates:
         lines = _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
         if lines is not None:
             break
@@ -2246,6 +2251,9 @@ def detect_python_api_findings(
                 else set[str]()
             )
         )
+        touched_all_assignment = any(
+            "__all__" in line for line in (*file_diff.added_lines, *file_diff.removed_lines)
+        )
         unresolved_all_contract = any(
             contract is not None and contract.has_explicit and not contract.is_supported
             for contract in (
@@ -2255,9 +2263,6 @@ def detect_python_api_findings(
             )
         )
         if unresolved_all_contract:
-            touched_all_assignment = any(
-                "__all__" in line for line in (*file_diff.added_lines, *file_diff.removed_lines)
-            )
             touched_meaningful_code = any(
                 stripped and not stripped.startswith("#")
                 for stripped in (
@@ -2382,7 +2387,7 @@ def detect_python_api_findings(
             else api_explicit_public_names,
             workspace_loader=workspace_loader,
         )
-        if workspace_explicit_exports is not None:
+        if workspace_explicit_exports is not None and not touched_all_assignment:
             if not removed_has_explicit_all:
                 removed_exports = removed_exports & workspace_explicit_exports
             if not added_has_explicit_all:
@@ -2421,7 +2426,7 @@ def detect_python_api_findings(
             has_explicit_all=added_has_explicit_all,
             explicit_exports=added_all_exports,
         )
-        if workspace_explicit_exports is not None:
+        if workspace_explicit_exports is not None and not touched_all_assignment:
             if not removed_has_explicit_all:
                 removed_classes = removed_classes & workspace_explicit_exports
             if not added_has_explicit_all:
