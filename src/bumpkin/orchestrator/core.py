@@ -128,6 +128,13 @@ class CoreAnalysisResult:
     contradictions: list[dict[str, Any]]
 
 
+def _workspace_loader_for_diff_result(diff_result: DiffResult):
+    repo_root = (diff_result.repo_root or "").strip()
+    if not repo_root:
+        return None
+    return build_filesystem_workspace_loader(repo_root)
+
+
 def _changelog_for_label(label: str) -> str:
     normalized = label.upper()
     mapping = {
@@ -1671,10 +1678,11 @@ def analyze_diff_core(
         diff_result.analyzed_files,
         policy=bumpkin_config.behavior_contract_policy,
     )
+    workspace_loader = _workspace_loader_for_diff_result(diff_result)
     findings = (
         detect_semver_findings(
             diff_result.full_diff_text,
-            workspace_loader=build_filesystem_workspace_loader(diff_result.repo_root),
+            workspace_loader=workspace_loader,
         )
         if diff_result.full_diff_text and not scope_mismatch_detected
         else []
