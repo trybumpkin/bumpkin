@@ -228,7 +228,12 @@ def _is_root_pyproject(path: str) -> bool:
 
 def _is_python_reexport_surface(path: str) -> bool:
     normalized = path.strip().replace("\\", "/").lower()
-    return normalized == "__init__.py" or normalized.endswith("/__init__.py")
+    return normalized.endswith(("__init__.py", "__init__.pyi"))
+
+
+def _is_python_api_surface(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    return normalized in {"api.py", "api.pyi"} or normalized.endswith(("/api.py", "/api.pyi"))
 
 
 def build_filesystem_workspace_loader(
@@ -433,7 +438,7 @@ def _collect_python_signature_source(lines: list[str], start_index: int) -> tupl
     cursor = start_index + 1
 
     while cursor < len(lines):
-        stripped = collected[-1].strip()
+        stripped = _strip_python_inline_comment(collected[-1]).strip()
         if paren_depth <= 0 and (
             stripped.endswith(":")
             or re.search(r"^\s*(?:async\s+)?def\b.*:\s*(?:\.\.\.|pass\b.*|return\b.*)$", stripped)
@@ -691,11 +696,14 @@ def _workspace_python_api_reexport_names(
 ) -> set[str] | None:
     raw_path = Path(path.strip())
     normalized = raw_path.as_posix().lower()
-    if not (normalized == "api.py" or normalized.endswith("/api.py")):
+    if not _is_python_api_surface(normalized):
         return None
 
-    init_path = raw_path.parent / "__init__.py"
-    lines = _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
+    lines: list[str] | None = None
+    for init_path in (raw_path.parent / "__init__.py", raw_path.parent / "__init__.pyi"):
+        lines = _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
+        if lines is not None:
+            break
     if lines is None:
         return set()
 
@@ -780,8 +788,7 @@ def _looks_like_python_reexport_facade(
 ) -> bool:
     if _is_python_reexport_surface(path):
         return True
-    normalized = path.strip().replace("\\", "/").strip("/").lower()
-    if not (normalized == "api.py" or normalized.endswith("/api.py")):
+    if not _is_python_api_surface(path.strip().replace("\\", "/").strip("/").lower()):
         return False
     api_reexport_names = _workspace_python_api_reexport_names(
         path,
@@ -1135,10 +1142,9 @@ def _extract_python_implicit_public_names(
         workspace_lines=workspace_lines,
         workspace_loader=workspace_loader,
     )
-    import_only_api_facade = _looks_like_python_import_only_facade(candidate_lines) and (
-        path.strip().replace("\\", "/").strip("/").lower() == "api.py"
-        or path.strip().replace("\\", "/").strip("/").lower().endswith("/api.py")
-    )
+    import_only_api_facade = _looks_like_python_import_only_facade(
+        candidate_lines
+    ) and _is_python_api_surface(path)
 
     index = 0
     while index < len(lines):
@@ -1299,7 +1305,7 @@ def _collect_python_signature_block(
     cursor = start_index + 1
 
     while cursor < len(version_lines):
-        stripped = collected[-1].strip()
+        stripped = _strip_python_inline_comment(collected[-1]).strip()
         if paren_depth <= 0 and (
             stripped.endswith(":")
             or re.search(r"^\s*(?:async\s+)?def\b.*:\s*(?:\.\.\.|pass\b.*|return\b.*)$", stripped)
@@ -1313,6 +1319,10 @@ def _collect_python_signature_block(
 
     normalized = " ".join(line.strip() for line in collected)
     return normalized, block_is_target, cursor
+
+
+def _strip_python_inline_comment(line: str) -> str:
+    return line.split("#", 1)[0].rstrip()
 
 
 def _extract_python_signatures(
@@ -1358,7 +1368,6 @@ def _extract_python_signatures(
         params = re.sub(r"\s+", "", def_match.group(2))
         return_type = _normalize_type(def_match.group(3))
         is_async = signature_source.lstrip().startswith("async def ")
-        param_list = _split_top_level_params(def_match.group(2))
         next_body_line: str | None = None
         if index < len(version_lines):
             candidate = version_lines[index][0]
@@ -1370,11 +1379,7 @@ def _extract_python_signatures(
         has_function_scope = any(entry[0] == "def" for entry in scope_stack)
         if def_match:
             scope_stack.append(("def", indent, None))
-        if (
-            param_list
-            and param_list[0].strip() in {"self", "cls"}
-            and _python_indent_level(line) > 0
-        ):
+        if _python_indent_level(line) > 0:
             if name == "__init__" and _python_indent_level(line) > 4:
                 continue
             if public_class_path and not has_function_scope:
@@ -1625,6 +1630,20 @@ def _is_optional_widening(old_params: str, new_params: str) -> bool:
     if old_specs is not None and new_specs is not None:
         if len(new_specs) < len(old_specs):
             return False
+        if len(new_specs) == len(old_specs):
+            widened_existing = False
+            for old_spec, new_spec in zip(old_specs, new_specs, strict=False):
+                if not (
+                    _is_python_parameter_name_compatible(old_spec, new_spec)
+                    and _is_python_parameter_kind_compatible(old_spec, new_spec)
+                    and old_spec.annotation == new_spec.annotation
+                ):
+                    return False
+                if old_spec.required and not new_spec.required:
+                    widened_existing = True
+                elif old_spec.required != new_spec.required:
+                    return False
+            return widened_existing
         if not all(
             _same_python_parameter_surface(old_spec, new_spec)
             for old_spec, new_spec in zip(old_specs, new_specs[: len(old_specs)], strict=False)
@@ -2160,6 +2179,12 @@ def detect_python_api_findings(
             touched_all_assignment = any(
                 "__all__" in line for line in (*file_diff.added_lines, *file_diff.removed_lines)
             )
+            touched_meaningful_code = any(
+                stripped and not stripped.startswith("#")
+                for stripped in (
+                    line.strip() for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                )
+            )
             candidate_names = sorted(
                 _extract_python_implicit_public_names(
                     removed_version_lines,
@@ -2176,7 +2201,7 @@ def detect_python_api_findings(
                     workspace_loader=workspace_loader,
                 )
             )
-            if candidate_names or touched_all_assignment:
+            if candidate_names or touched_all_assignment or touched_meaningful_code:
                 counter += 1
                 findings.append(
                     _build_finding(
@@ -2543,6 +2568,25 @@ def detect_python_api_findings(
             if old_params == new_params and old_return == new_return and old_async == new_async:
                 continue
 
+            if old_async != new_async:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_async_contract_changed",
+                        confidence="high",
+                        title=f"Public Python async contract changed: {symbol}",
+                        why=(
+                            "Switching between async and sync changes how callers must invoke "
+                            "the public Python callable."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
+                continue
+
             if _is_optional_widening(old_params, new_params):
                 counter += 1
                 findings.append(
@@ -2573,25 +2617,6 @@ def detect_python_api_findings(
                         why=(
                             "The public Python callable became stricter by adding required input "
                             "or tightening existing parameters."
-                        ),
-                        path=file_diff.path,
-                        snippet=new_sigs[0].source,
-                        counter=counter,
-                    )
-                )
-                continue
-
-            if old_async != new_async:
-                counter += 1
-                findings.append(
-                    _build_finding(
-                        severity="MAJOR",
-                        rule="export_async_contract_changed",
-                        confidence="high",
-                        title=f"Public Python async contract changed: {symbol}",
-                        why=(
-                            "Switching between async and sync changes how callers must invoke "
-                            "the public Python callable."
                         ),
                         path=file_diff.path,
                         snippet=new_sigs[0].source,

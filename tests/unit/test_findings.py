@@ -374,6 +374,22 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("fetch_user" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_prioritizes_async_flip_over_optional_widening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+-async def fetch_user(user_id: str) -> dict:
++def fetch_user(user_id: str, expand: bool = False) -> dict:
+     return {"id": user_id}
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_async_contract_changed" for finding in findings)
+    assert not any(finding.rule == "export_signature_optional_widening" for finding in findings)
+
+
 def test_detect_python_findings_detects_async_public_function_removal() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -406,6 +422,22 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("public_api" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_treats_required_to_optional_as_widening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+-def public_api(x: int) -> int:
++def public_api(x: int = 1) -> int:
+     return x
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_signature_optional_widening" for finding in findings)
+    assert not any(finding.rule == "export_signature_incompatible_change" for finding in findings)
+
+
 def test_detect_python_findings_detects_public_class_method_tightening() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -422,6 +454,27 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any(
         finding.rule == "export_signature_requiredness_tightening"
         and "Client.fetch" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_staticmethod_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ class Client:
+     @staticmethod
+-    def parse(value: str = "x") -> str:
++    def parse(value: str) -> str:
+         return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "Client.parse" in finding.title
         for finding in findings
     )
 
@@ -695,6 +748,25 @@ diff --git a/pkg/api.py b/pkg/api.py
 
     assert any(finding.rule == "python_all_unresolved" for finding in findings)
     assert not any("helper" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_requests_manual_review_for_private_change_with_dynamic___all__() -> (
+    None
+):
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ __all__ = compute_exports()
+-def _helper(x: int = 1) -> int:
++def _helper(x: int) -> int:
+     return x
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "python_all_unresolved" for finding in findings)
+    assert not any("_helper" in finding.title for finding in findings)
 
 
 def test_detect_python_findings_uses_workspace___all___contract_outside_hunk(
@@ -1326,6 +1398,21 @@ diff --git a/pkg/api.pyi b/pkg/api.pyi
     assert not any("stable" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_ignores_inline_comment_only_signature_edits_in_stubs() -> None:
+    diff_text = """
+diff --git a/pkg/api.pyi b/pkg/api.pyi
+--- a/pkg/api.pyi
++++ b/pkg/api.pyi
+@@ -1,2 +1,2 @@
+-def stable() -> int: ...
++def stable() -> int: ...  # stable helper
+ def changed(x: int = ...) -> int: ...
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_detects_removed_stub_overload() -> None:
     diff_text = """
 diff --git a/pkg/api.pyi b/pkg/api.pyi
@@ -1340,6 +1427,53 @@ diff --git a/pkg/api.pyi b/pkg/api.pyi
 
     assert any(finding.rule == "export_overload_removed" for finding in findings)
     assert any("public_api" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_stub_package_reexport_rename() -> None:
+    diff_text = """
+diff --git a/pkg/__init__.pyi b/pkg/__init__.pyi
+--- a/pkg/__init__.pyi
++++ b/pkg/__init__.pyi
+@@ -1,1 +1,1 @@
+-from .client import Client
++from .client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_stub_api_facade_reexport_rename(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.pyi").write_text(
+        "from .api import Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.pyi"
+    target.write_text("from .client import ServiceClient\n", encoding="utf-8")
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,1 +1,1 @@
+-from .client import Client
++from .client import ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("ServiceClient" in finding.title for finding in findings)
 
 
 def test_detect_python_findings_requests_manual_review_for_internal_helpers_in_reexported_api_module(
