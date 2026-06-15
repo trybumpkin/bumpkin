@@ -358,6 +358,22 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert any("fetch_user" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_async_contract_flip() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+-async def fetch_user(user_id: str) -> dict:
++def fetch_user(user_id: str) -> dict:
+     return {"id": user_id}
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_async_contract_changed" for finding in findings)
+    assert any("fetch_user" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_detects_async_public_function_removal() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -372,6 +388,63 @@ diff --git a/pkg/api.py b/pkg/api.py
 
     assert any(finding.rule == "export_symbol_removed" for finding in findings)
     assert any(finding.severity == "MAJOR" for finding in findings)
+
+
+def test_detect_python_findings_detects_return_type_only_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+-def public_api(x: int) -> int:
++def public_api(x: int) -> str:
+     return x
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_return_type_changed" for finding in findings)
+    assert any("public_api" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_public_class_method_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,3 @@
+ class Client:
+-    def fetch(self, user_id: str = "1") -> dict:
++    def fetch(self, user_id: str) -> dict:
+         return {"id": user_id}
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "Client.fetch" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_nested_public_class_method_tightening() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ class Outer:
+     class Inner:
+-        def api(self, value: int = 1) -> int:
++        def api(self, value: int) -> int:
+             return value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "Outer.Inner.api" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_respects_multiline___all___exports() -> None:

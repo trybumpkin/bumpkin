@@ -112,6 +112,7 @@ class _FunctionSignature:
     name: str
     params: str
     return_type: str | None
+    is_async: bool
     source: str
 
 
@@ -134,11 +135,42 @@ WorkspaceLoader = Callable[[str], list[str] | None]
 
 
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
-    return left.params == right.params and left.return_type == right.return_type
+    return (
+        left.params == right.params
+        and left.return_type == right.return_type
+        and left.is_async == right.is_async
+    )
 
 
-def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None]:
-    return (signature.params, signature.return_type)
+def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None, str]:
+    return (signature.params, signature.return_type, "async" if signature.is_async else "sync")
+
+
+def _python_symbol_roots(symbol: str) -> tuple[str, str]:
+    if "." not in symbol:
+        return symbol, symbol
+    root_class = symbol.split(".", 1)[0]
+    container = symbol.rsplit(".", 1)[0]
+    return root_class, container
+
+
+def _is_public_python_member_symbol(
+    symbol: str,
+    *,
+    public_exports: set[str],
+    public_classes: set[str],
+) -> bool:
+    if symbol in public_exports:
+        return True
+    if "." not in symbol:
+        return False
+    root_class, container = _python_symbol_roots(symbol)
+    return (
+        container in public_exports
+        or container in public_classes
+        or root_class in public_exports
+        or root_class in public_classes
+    )
 
 
 def _reindex_findings(findings: list[Finding]) -> list[Finding]:
@@ -371,6 +403,7 @@ def _extract_export_signatures(lines: list[str]) -> dict[str, list[_FunctionSign
                     name=match.group(1),
                     params=re.sub(r"\s+", "", match.group(2)),
                     return_type=_normalize_type(match.group(3)),
+                    is_async=False,
                     source=line,
                 )
                 signatures.setdefault(signature.name, []).append(signature)
@@ -790,24 +823,46 @@ def _infer_python_constructor_class_from_workspace(
     body_anchor: str | None,
     workspace_loader: WorkspaceLoader | None,
 ) -> str | None:
+    class_path = _infer_python_member_class_from_workspace(
+        path,
+        member_name="__init__",
+        body_anchor=body_anchor,
+        workspace_loader=workspace_loader,
+    )
+    if class_path is None or "." in class_path:
+        return None
+    return class_path
+
+
+def _infer_python_member_class_from_workspace(
+    path: str,
+    *,
+    member_name: str,
+    body_anchor: str | None,
+    workspace_loader: WorkspaceLoader | None,
+) -> str | None:
     lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
     if lines is None:
         return None
 
     candidates: list[str] = []
-    current_top_level_class: str | None = None
+    scope_stack: list[tuple[str, int, str | None]] = []
     index = 0
     while index < len(lines):
         line = lines[index]
-        is_top_level = _is_python_top_level_statement(line)
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
+        indent = _python_indent_level(line)
+        if line.strip():
+            while scope_stack and indent <= scope_stack[-1][1]:
+                scope_stack.pop()
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if class_match and not line.lstrip().startswith("@"):
             class_name = class_match.group(1)
-            current_top_level_class = class_name if not class_name.startswith("_") else None
+            scope_stack.append(
+                ("class", indent, class_name if not class_name.startswith("_") else None)
+            )
             index += 1
             continue
-        if is_top_level and not class_match and line.strip():
-            current_top_level_class = None
 
         def_start = PYTHON_DEF_START_PATTERN.search(line)
         if not def_start:
@@ -816,21 +871,28 @@ def _infer_python_constructor_class_from_workspace(
 
         signature_source, next_index = _collect_python_signature_source(lines, index)
         def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if (
-            current_top_level_class
-            and def_match
-            and def_match.group(1) == "__init__"
-            and _python_indent_level(line) > 0
-        ):
+        if def_match and def_match.group(1) == member_name and _python_indent_level(line) > 0:
             next_body_line: str | None = None
             if next_index < len(lines):
                 candidate = lines[next_index].strip()
                 if candidate:
                     next_body_line = candidate
-            if body_anchor is None or _python_statement_anchor(
-                next_body_line
-            ) == _python_statement_anchor(body_anchor):
-                candidates.append(current_top_level_class)
+            public_class_path = [
+                entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
+            ]
+            has_function_scope = any(entry[0] == "def" for entry in scope_stack)
+            if (
+                public_class_path
+                and not has_function_scope
+                and (
+                    body_anchor is None
+                    or _python_statement_anchor(next_body_line)
+                    == _python_statement_anchor(body_anchor)
+                )
+            ):
+                candidates.append(".".join(public_class_path))
+        if def_match:
+            scope_stack.append(("def", indent, None))
         index = next_index
 
     unique_candidates = sorted(set(candidates))
@@ -1260,22 +1322,25 @@ def _extract_python_signatures(
     workspace_loader: WorkspaceLoader | None = None,
 ) -> dict[str, list[_FunctionSignature]]:
     signatures: dict[str, list[_FunctionSignature]] = {}
-    current_top_level_class: str | None = None
+    scope_stack: list[tuple[str, int, str | None]] = []
     version_lines = _iter_python_version_lines(file_diff, target_prefix=target_prefix)
     index = 0
 
     while index < len(version_lines):
         line, _is_target_line = version_lines[index]
-        is_top_level = _is_python_top_level_statement(line)
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
+        indent = _python_indent_level(line)
+        if line.strip():
+            while scope_stack and indent <= scope_stack[-1][1]:
+                scope_stack.pop()
+
+        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if class_match and not line.lstrip().startswith("@"):
             class_name = class_match.group(1)
-            current_top_level_class = class_name if not class_name.startswith("_") else None
+            scope_stack.append(
+                ("class", indent, class_name if not class_name.startswith("_") else None)
+            )
             index += 1
             continue
-
-        if is_top_level and not class_match and line.strip():
-            current_top_level_class = None
 
         def_start = PYTHON_DEF_START_PATTERN.search(line)
         if not def_start:
@@ -1292,38 +1357,51 @@ def _extract_python_signatures(
         name = def_match.group(1)
         params = re.sub(r"\s+", "", def_match.group(2))
         return_type = _normalize_type(def_match.group(3))
+        is_async = signature_source.lstrip().startswith("async def ")
         param_list = _split_top_level_params(def_match.group(2))
         next_body_line: str | None = None
         if index < len(version_lines):
             candidate = version_lines[index][0]
             if _python_indent_level(candidate) > _python_indent_level(line) and candidate.strip():
                 next_body_line = candidate.strip()
+        public_class_path = [
+            entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
+        ]
+        has_function_scope = any(entry[0] == "def" for entry in scope_stack)
+        if def_match:
+            scope_stack.append(("def", indent, None))
         if (
-            name == "__init__"
-            and param_list
-            and param_list[0].strip() == "self"
+            param_list
+            and param_list[0].strip() in {"self", "cls"}
             and _python_indent_level(line) > 0
         ):
-            if _python_indent_level(line) > 4:
+            if name == "__init__" and _python_indent_level(line) > 4:
                 continue
-            inferred_class = (
-                current_top_level_class
-                or _infer_python_constructor_class_from_workspace(
+            if public_class_path and not has_function_scope:
+                symbol_name = ".".join([*public_class_path, name])
+            elif name == "__init__":
+                inferred_class = _infer_python_constructor_class_from_workspace(
                     file_diff.path,
                     body_anchor=next_body_line,
                     workspace_loader=workspace_loader,
                 )
-            )
-            if inferred_class:
+                if not inferred_class:
+                    continue
                 symbol_name = f"{inferred_class}.__init__"
             else:
-                continue
+                inferred_class = _infer_python_member_class_from_workspace(
+                    file_diff.path,
+                    member_name=name,
+                    body_anchor=next_body_line,
+                    workspace_loader=workspace_loader,
+                )
+                if not inferred_class:
+                    continue
+                symbol_name = f"{inferred_class}.{name}"
         else:
             if name.startswith("_"):
                 continue
-            if not is_top_level:
-                continue
-            if param_list and param_list[0].strip() in {"self", "cls"}:
+            if indent > 0:
                 continue
             symbol_name = name
 
@@ -1331,6 +1409,7 @@ def _extract_python_signatures(
             name=symbol_name,
             params=params,
             return_type=return_type,
+            is_async=is_async,
             source=signature_source,
         )
         signatures.setdefault(symbol_name, []).append(signature)
@@ -2384,13 +2463,10 @@ def detect_python_api_findings(
         shared_symbols = sorted(
             symbol
             for symbol in (set(removed_signatures) & set(added_signatures))
-            if symbol in shared_public_exports
-            or (
-                symbol.endswith(".__init__")
-                and (
-                    symbol.rsplit(".", 1)[0] in shared_public_exports
-                    or symbol.rsplit(".", 1)[0] in workspace_public_classes
-                )
+            if _is_public_python_member_symbol(
+                symbol,
+                public_exports=shared_public_exports,
+                public_classes=workspace_public_classes,
             )
         )
         for symbol in shared_symbols:
@@ -2461,8 +2537,10 @@ def detect_python_api_findings(
             new_params = new_sigs[0].params
             old_return = old_sigs[0].return_type
             new_return = new_sigs[0].return_type
+            old_async = old_sigs[0].is_async
+            new_async = new_sigs[0].is_async
 
-            if old_params == new_params and old_return == new_return:
+            if old_params == new_params and old_return == new_return and old_async == new_async:
                 continue
 
             if _is_optional_widening(old_params, new_params):
@@ -2503,7 +2581,23 @@ def detect_python_api_findings(
                 )
                 continue
 
-            if _has_compatible_python_parameter_surface(old_params, new_params):
+            if old_async != new_async:
+                counter += 1
+                findings.append(
+                    _build_finding(
+                        severity="MAJOR",
+                        rule="export_async_contract_changed",
+                        confidence="high",
+                        title=f"Public Python async contract changed: {symbol}",
+                        why=(
+                            "Switching between async and sync changes how callers must invoke "
+                            "the public Python callable."
+                        ),
+                        path=file_diff.path,
+                        snippet=new_sigs[0].source,
+                        counter=counter,
+                    )
+                )
                 continue
 
             if old_return and new_return and old_return != new_return:
@@ -2523,6 +2617,9 @@ def detect_python_api_findings(
                         counter=counter,
                     )
                 )
+                continue
+
+            if _has_compatible_python_parameter_surface(old_params, new_params):
                 continue
 
             counter += 1
