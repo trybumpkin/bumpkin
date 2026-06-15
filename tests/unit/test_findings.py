@@ -571,6 +571,24 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_reexport_target_change_under_explicit___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+ __all__ = ["Client"]
+-from .client import Client
++from .client import ServiceClient as Client
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_reexport_target_changed" and "Client" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_ignores_comment_only_class_mentions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1560,6 +1578,42 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any(
         finding.rule == "export_signature_requiredness_tightening"
         and "_create_client" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_reexport_target_change_in_mixed_api_module(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        "from .client import ServiceClient as Client\n\nHELPER = 1\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,3 +1,3 @@
+-from .client import Client
++from .client import ServiceClient as Client
+
+ HELPER = 1
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_reexport_target_changed" and "Client" in finding.title
         for finding in findings
     )
 

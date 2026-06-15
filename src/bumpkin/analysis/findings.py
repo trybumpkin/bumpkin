@@ -1285,6 +1285,83 @@ def _extract_python_import_public_names(lines: list[str], *, path: str) -> set[s
     return exports
 
 
+def _extract_python_public_import_bindings(
+    lines: list[str],
+    *,
+    path: str,
+    workspace_lines: list[str] | None = None,
+    explicit_public_names: set[str] | None = None,
+    workspace_loader: WorkspaceLoader | None = None,
+) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    candidate_lines = workspace_lines if workspace_lines is not None else lines
+    allow_reexport_imports = _looks_like_python_reexport_facade(
+        lines,
+        path=path,
+        workspace_lines=workspace_lines,
+        workspace_loader=workspace_loader,
+    )
+    import_only_api_facade = _looks_like_python_import_only_facade(
+        candidate_lines
+    ) and _is_python_api_surface(path)
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not (allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line)):
+            index += 1
+            continue
+
+        statement_source, index = _collect_python_import_statement(lines, index)
+        try:
+            module = ast.parse(statement_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1:
+            continue
+
+        statement = module.body[0]
+        if not _is_python_public_reexport_statement(statement, path=path):
+            continue
+
+        explicit_alias_names = _extract_python_explicit_import_alias_names(
+            statement_source,
+            path=path,
+        )
+        if isinstance(statement, ast.ImportFrom):
+            module_ref = "." * statement.level + (statement.module or "")
+            for alias in statement.names:
+                if alias.name == "*":
+                    continue
+                exported_name = alias.asname or alias.name
+                if (
+                    not import_only_api_facade
+                    and explicit_public_names is not None
+                    and exported_name not in explicit_public_names
+                    and exported_name not in explicit_alias_names
+                ):
+                    continue
+                bindings[exported_name] = f"{module_ref}:{alias.name}"
+        elif isinstance(statement, ast.Import):
+            for alias in statement.names:
+                if alias.asname is None:
+                    continue
+                exported_name = alias.asname
+                if (
+                    not import_only_api_facade
+                    and explicit_public_names is not None
+                    and exported_name not in explicit_public_names
+                    and exported_name not in explicit_alias_names
+                ):
+                    continue
+                bindings[exported_name] = alias.name
+
+    return bindings
+
+
 def _iter_python_version_lines(
     file_diff: _FileDiff,
     *,
@@ -2276,6 +2353,15 @@ def detect_python_api_findings(
                 workspace_loader=workspace_loader,
             )
         )
+        removed_import_bindings = _extract_python_public_import_bindings(
+            removed_version_lines,
+            path=file_diff.path,
+            workspace_lines=workspace_lines,
+            explicit_public_names=removed_all_exports
+            if removed_has_explicit_all
+            else api_explicit_public_names,
+            workspace_loader=workspace_loader,
+        )
         added_exports = (
             added_all_exports
             if added_has_explicit_all
@@ -2286,6 +2372,15 @@ def detect_python_api_findings(
                 explicit_public_names=api_explicit_public_names,
                 workspace_loader=workspace_loader,
             )
+        )
+        added_import_bindings = _extract_python_public_import_bindings(
+            added_version_lines,
+            path=file_diff.path,
+            workspace_lines=workspace_lines,
+            explicit_public_names=added_all_exports
+            if added_has_explicit_all
+            else api_explicit_public_names,
+            workspace_loader=workspace_loader,
         )
         if workspace_explicit_exports is not None:
             if not removed_has_explicit_all:
@@ -2471,6 +2566,39 @@ def detect_python_api_findings(
                             if any(symbol in line for symbol in added_only)
                         ),
                         file_diff.added_lines[0] if file_diff.added_lines else "",
+                    ),
+                    counter=counter,
+                )
+            )
+
+        shared_import_binding_symbols = sorted(
+            symbol
+            for symbol in (set(removed_import_bindings) & set(added_import_bindings))
+            if symbol in (removed_exports & added_exports)
+            and removed_import_bindings[symbol] != added_import_bindings[symbol]
+        )
+        for symbol in shared_import_binding_symbols:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_reexport_target_changed",
+                    confidence="high",
+                    title=f"Changed public Python re-export target: {symbol}",
+                    why=(
+                        "The public Python symbol still has the same exported name, but it now "
+                        "resolves to a different imported target for downstream users."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if symbol in line
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
                     ),
                     counter=counter,
                 )
