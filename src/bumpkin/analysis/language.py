@@ -44,6 +44,13 @@ def _language_group_for_suffix(suffix: str) -> str | None:
     return None
 
 
+def _language_group_for_path(file_path: str) -> str | None:
+    normalized = str(file_path).strip().replace("\\", "/").lower()
+    if normalized.endswith(("pyproject.toml", "setup.cfg", "setup.py")):
+        return "python"
+    return _language_group_for_suffix(Path(file_path).suffix.lower())
+
+
 def detect_language_hints(file_paths: list[str]) -> list[str]:
     groups = detect_language_groups(file_paths)
     return get_language_hints_for_groups(groups)
@@ -52,7 +59,7 @@ def detect_language_hints(file_paths: list[str]) -> list[str]:
 def detect_language_groups(file_paths: list[str]) -> list[str]:
     groups: set[str] = set()
     for file_path in file_paths:
-        group = _language_group_for_suffix(Path(file_path).suffix.lower())
+        group = _language_group_for_path(file_path)
         if group:
             groups.add(group)
 

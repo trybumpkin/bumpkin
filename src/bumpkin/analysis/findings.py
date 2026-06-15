@@ -27,7 +27,7 @@ SETUP_CFG_PYTHON_REQUIRES_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SETUP_PY_PYTHON_REQUIRES_PATTERN = re.compile(
-    r"""python_requires\s*=\s*["']([^"']+)["']""",
+    r"""^\s*python_requires\s*=\s*["']([^"']+)["']""",
     re.IGNORECASE,
 )
 POETRY_PYTHON_PATTERN = re.compile(
@@ -1754,6 +1754,9 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
 
     if _is_root_setup_py(path):
         for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith(("#", '"', "'")):
+                continue
             match = SETUP_PY_PYTHON_REQUIRES_PATTERN.search(line)
             if not match:
                 continue

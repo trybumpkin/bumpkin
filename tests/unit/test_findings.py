@@ -256,6 +256,20 @@ diff --git a/setup.py b/setup.py
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_ignores_setup_py_python_requires_comments() -> None:
+    diff_text = """
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -1,1 +1,1 @@
+-# python_requires=">=3.9"
++# python_requires=">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_semver_findings_combines_language_detectors() -> None:
     diff_text = """
 diff --git a/pyproject.toml b/pyproject.toml

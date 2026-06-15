@@ -17,3 +17,8 @@ def test_detect_language_hints_empty_for_unknown_extensions() -> None:
 def test_detect_language_groups_treats_stub_files_as_python() -> None:
     groups = detect_language_groups(["pkg/api.pyi"])
     assert groups == ["python"]
+
+
+def test_detect_language_groups_treats_python_packaging_metadata_as_python() -> None:
+    groups = detect_language_groups(["pyproject.toml", "setup.cfg", "setup.py"])
+    assert groups == ["python"]
