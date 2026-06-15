@@ -1668,6 +1668,7 @@ def analyze_diff_core(
     scope_mismatch_reason: str | None = None,
     scope_guard: dict[str, object] | None = None,
     public_api_hints: list[str] | None = None,
+    language_hints: list[str] | None = None,
 ) -> CoreAnalysisResult:
     local_notes = list(notes or [])
     labels = list(event_labels or [])
@@ -2050,6 +2051,7 @@ def analyze_diff_core(
                 request_timeout=request_timeout,
                 engine_label=deterministic_label,
                 case_file_text=render_case_file_text(case_file),
+                language_hints=language_hints,
             )
         )
 

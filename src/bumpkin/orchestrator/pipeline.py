@@ -226,6 +226,7 @@ def run(args: Namespace) -> int:
         scope_mismatch_reason=scope_mismatch_reason,
         scope_guard=scope_guard,
         public_api_hints=public_api_hints,
+        language_hints=language_hints,
     )
 
     output = core_result.output
