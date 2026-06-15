@@ -73,6 +73,31 @@ def test_build_diff_respects_extended_default_ignores(monkeypatch) -> None:
     assert result.ignored_files_total == 2
 
 
+def test_diff_result_keeps_backward_compatible_positional_constructor() -> None:
+    result = diff.DiffResult(
+        "base",
+        "head",
+        "diff --git a/src/app.ts b/src/app.ts\n",
+        "diff --git a/src/app.ts b/src/app.ts\n",
+        False,
+        ["src/app.ts"],
+        [],
+        1,
+        0,
+        12,
+        12,
+        0,
+        0,
+        1,
+        0,
+        0,
+        [],
+    )
+
+    assert result.repo_root is None
+    assert result.analyzed_files == ["src/app.ts"]
+
+
 def test_build_diff_ignores_common_lockfile_formats(monkeypatch) -> None:
     monkeypatch.setattr(
         diff,

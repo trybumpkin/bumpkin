@@ -180,7 +180,10 @@ def run(args: Namespace) -> int:
         notes.append(
             "Detected multiple language groups; using the experimental generic prompt pack."
         )
-    elif prompt_metadata.promotion_status != "promoted":
+    elif (
+        getattr(prompt_metadata, "language_group", prompt_language_group) == "generic"
+        and prompt_metadata.promotion_status != "promoted"
+    ):
         notes.append(
             "Using an experimental generic prompt pack because no promoted language-specific pack matched."
         )

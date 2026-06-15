@@ -42,7 +42,6 @@ class DiffUnit:
 class DiffResult:
     from_ref: str
     to_ref: str
-    repo_root: str | None
     diff_text: str
     full_diff_text: str
     truncated: bool
@@ -58,6 +57,7 @@ class DiffResult:
     scope_unexpected_files: int
     scope_missing_files: int
     notes: list[str]
+    repo_root: str | None = None
 
 
 def run_git(args: list[str]) -> str:
