@@ -204,6 +204,40 @@ diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pypr
     assert findings == []
 
 
+def test_detect_python_findings_support_floor_raise_in_root_setup_cfg() -> None:
+    diff_text = """
+diff --git a/setup.cfg b/setup.cfg
+--- a/setup.cfg
++++ b/setup.cfg
+@@ -1,2 +1,2 @@
+ [options]
+-python_requires = >=3.9
++python_requires = >=3.10
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_in_root_poetry_pyproject() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,3 +1,3 @@
+ [tool.poetry.dependencies]
+-python = ">=3.9,<4.0"
++python = ">=3.10,<4.0"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
 def test_detect_semver_findings_combines_language_detectors() -> None:
     diff_text = """
 diff --git a/pyproject.toml b/pyproject.toml

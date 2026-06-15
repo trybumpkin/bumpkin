@@ -19,7 +19,15 @@ JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"
 PYTHON_EXTENSIONS = (".py", ".pyi")
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
-    r"""^\s*requires-python\s*=\s*["']>=\s*(\d+(?:\.\d+)*)[^"']*["']""",
+    r"""^\s*requires-python\s*=\s*["']([^"']+)["']""",
+    re.IGNORECASE,
+)
+SETUP_CFG_PYTHON_REQUIRES_PATTERN = re.compile(
+    r"""^\s*python_requires\s*=\s*["']?([^"'\n]+)["']?""",
+    re.IGNORECASE,
+)
+POETRY_PYTHON_PATTERN = re.compile(
+    r"""^\s*python\s*=\s*["']([^"']+)["']""",
     re.IGNORECASE,
 )
 
@@ -236,6 +244,11 @@ def _is_python_path(path: str) -> bool:
 def _is_root_pyproject(path: str) -> bool:
     normalized = path.strip().replace("\\", "/").lower()
     return normalized == "pyproject.toml"
+
+
+def _is_root_setup_cfg(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    return normalized == "setup.cfg"
 
 
 def _is_python_reexport_surface(path: str) -> bool:
@@ -1674,12 +1687,42 @@ def _extract_python_classes(
     return classes
 
 
-def _extract_requires_python_floor(lines: list[str]) -> tuple[int, ...] | None:
+def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | None:
+    match = re.search(r">=\s*(\d+(?:\.\d+)*)", constraint)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ...] | None:
+    if _is_root_setup_cfg(path):
+        for line in lines:
+            match = SETUP_CFG_PYTHON_REQUIRES_PATTERN.search(line)
+            if not match:
+                continue
+            floor = _extract_python_floor_from_constraint(match.group(1))
+            if floor is not None:
+                return floor
+        return None
+
+    if not _is_root_pyproject(path):
+        return None
+
+    current_section: str | None = None
     for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current_section = stripped.lower()
         match = REQUIRES_PYTHON_PATTERN.search(line)
-        if not match:
-            continue
-        return tuple(int(part) for part in match.group(1).split("."))
+        if match:
+            floor = _extract_python_floor_from_constraint(match.group(1))
+            if floor is not None:
+                return floor
+        poetry_match = POETRY_PYTHON_PATTERN.search(line)
+        if poetry_match and current_section == "[tool.poetry.dependencies]":
+            floor = _extract_python_floor_from_constraint(poetry_match.group(1))
+            if floor is not None:
+                return floor
     return None
 
 
@@ -2289,10 +2332,16 @@ def detect_python_api_findings(
     counter = 0
 
     for file_diff in file_diffs:
-        removed_floor = _extract_requires_python_floor(file_diff.removed_lines)
-        added_floor = _extract_requires_python_floor(file_diff.added_lines)
+        removed_version_lines = [
+            line for prefix, line in file_diff.ordered_lines if prefix in {" ", "-"}
+        ]
+        added_version_lines = [
+            line for prefix, line in file_diff.ordered_lines if prefix in {" ", "+"}
+        ]
+        removed_floor = _extract_requires_python_floor(file_diff.path, removed_version_lines)
+        added_floor = _extract_requires_python_floor(file_diff.path, added_version_lines)
         if (
-            _is_root_pyproject(file_diff.path)
+            (_is_root_pyproject(file_diff.path) or _is_root_setup_cfg(file_diff.path))
             and added_floor is not None
             and (removed_floor is None or added_floor > removed_floor)
         ):
@@ -2319,7 +2368,10 @@ def detect_python_api_findings(
                         (
                             line
                             for line in file_diff.added_lines
-                            if "requires-python" in line.lower()
+                            if any(
+                                marker in line.lower()
+                                for marker in ("requires-python", "python_requires", "python =")
+                            )
                         ),
                         file_diff.added_lines[0] if file_diff.added_lines else "",
                     ),
