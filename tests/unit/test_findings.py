@@ -1750,6 +1750,38 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("helper" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_requests_manual_review_for_mixed_api_import_binding_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    target = package_dir / "api.py"
+    target.write_text(
+        "from .client import ServiceClient as Client\n\nX = 1\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,3 +1,3 @@
+-from .client import Client
++from .client import ServiceClient as Client
+
+ X = 1
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "python_api_module_import_binding_changed" and "Client" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_detects_reexported_private_helper_in_non_api_module(
     tmp_path: Path,
     monkeypatch,
@@ -1926,6 +1958,46 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
         finding.rule == "python_api_module_local_surface_changed"
         and "local_public" in finding.title
         for finding in findings
+    )
+
+
+def test_detect_python_findings_keeps_explicit___all___locals_deterministic_with_root_reexports(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import public_api\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "api.py"
+    target.write_text(
+        '__all__ = ["public_api", "helper"]\n\n'
+        "def public_api() -> int:\n    return 1\n\n"
+        "def helper(x: int) -> int:\n    return x\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -5,2 +5,2 @@
+-def helper(x: int = 1) -> int:
++def helper(x: int) -> int:
+     return x
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "helper" in finding.title
+        for finding in findings
+    )
+    assert not any(
+        finding.rule == "python_api_module_local_surface_changed" for finding in findings
     )
 
 

@@ -1376,6 +1376,7 @@ def _extract_python_public_import_bindings(
     import_only_api_facade = _looks_like_python_import_only_facade(
         candidate_lines
     ) and _is_python_api_surface(path)
+    allow_api_import_bindings = allow_reexport_imports or _is_python_api_surface(path)
 
     index = 0
     while index < len(lines):
@@ -1383,7 +1384,7 @@ def _extract_python_public_import_bindings(
         if not _is_python_top_level_statement(line):
             index += 1
             continue
-        if not (allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line)):
+        if not (allow_api_import_bindings and PYTHON_IMPORT_START_PATTERN.search(line)):
             index += 1
             continue
 
@@ -2724,10 +2725,32 @@ def detect_python_api_findings(
                 )
             )
 
+        shared_public_exports = removed_exports & added_exports
+        unreexported_local_public_exports: set[str] = set()
+        if workspace_api_reexport_names:
+            shared_local_public_exports = removed_local_public_names & added_local_public_names
+            protected_local_export_contract = removed_all_exports & added_all_exports
+            if workspace_explicit_exports is not None and not touched_all_assignment:
+                protected_local_export_contract = (
+                    protected_local_export_contract | workspace_explicit_exports
+                )
+            explicit_shared_local_public_exports = (
+                shared_local_public_exports & protected_local_export_contract
+            )
+            unreexported_local_public_exports = (
+                shared_local_public_exports
+                - workspace_api_reexport_names
+                - explicit_shared_local_public_exports
+            )
+            shared_public_exports = (
+                shared_public_exports
+                - (shared_local_public_exports - explicit_shared_local_public_exports)
+            ) | (shared_local_public_exports & workspace_api_reexport_names)
+
         shared_import_binding_symbols = sorted(
             symbol
             for symbol in (set(removed_import_bindings) & set(added_import_bindings))
-            if symbol in (removed_exports & added_exports)
+            if symbol in shared_public_exports
             and removed_import_bindings[symbol] != added_import_bindings[symbol]
         )
         for symbol in shared_import_binding_symbols:
@@ -2757,16 +2780,45 @@ def detect_python_api_findings(
                 )
             )
 
-        shared_public_exports = removed_exports & added_exports
-        unreexported_local_public_exports: set[str] = set()
-        if workspace_api_reexport_names:
-            shared_local_public_exports = removed_local_public_names & added_local_public_names
-            unreexported_local_public_exports = (
-                shared_local_public_exports - workspace_api_reexport_names
+        unresolved_api_import_binding_symbols = sorted(
+            symbol
+            for symbol in (set(removed_import_bindings) & set(added_import_bindings))
+            if _is_python_api_surface(file_diff.path)
+            and symbol not in shared_public_exports
+            and removed_import_bindings[symbol] != added_import_bindings[symbol]
+        )
+        if unresolved_api_import_binding_symbols:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MANUAL_REVIEW",
+                    rule="python_api_module_import_binding_changed",
+                    confidence="low",
+                    title=(
+                        "Changed api.py import-surface candidate requires manual review: "
+                        f"{', '.join(unresolved_api_import_binding_symbols[:3])}"
+                    ),
+                    why=(
+                        "This api.py module changed an imported symbol target without stronger "
+                        "export evidence. Bumpkin cannot deterministically tell whether it is part "
+                        "of the public submodule API or an internal wiring detail."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if any(
+                                symbol in line for symbol in unresolved_api_import_binding_symbols
+                            )
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
+                    counter=counter,
+                )
             )
-            shared_public_exports = (
-                shared_public_exports - removed_local_public_names - added_local_public_names
-            ) | (shared_local_public_exports & workspace_api_reexport_names)
         workspace_public_classes = workspace_public_names or set()
         shared_symbols = sorted(
             symbol
