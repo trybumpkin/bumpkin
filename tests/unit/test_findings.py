@@ -538,6 +538,40 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_nested_public_class_removal() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,2 @@
+ class Outer:
+-    class Inner:
+-        pass
+     pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("Outer.Inner" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_nested_public_class_addition() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,4 @@
+ class Outer:
++    class Inner:
++        pass
+     pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("Outer.Inner" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_respects_multiline___all___exports() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1731,6 +1765,43 @@ def test_detect_python_findings_detects_reexported_private_helper_in_non_api_mod
     target = package_dir / "client.py"
     target.write_text(
         "def _create_client(timeout: int = 1) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,2 +1,2 @@
+-def _create_client(timeout: int = 1) -> int:
++def _create_client(timeout: int) -> int:
+     return timeout
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "_create_client" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_merges_runtime_and_stub_package_reexports_for_py_modules(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (package_dir / "__init__.pyi").write_text(
+        "from .client import _create_client as Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "client.py"
+    target.write_text(
+        "def _create_client(timeout: int) -> int:\n    return timeout\n",
         encoding="utf-8",
     )
     diff_text = f"""

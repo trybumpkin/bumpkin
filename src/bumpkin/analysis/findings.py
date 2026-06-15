@@ -758,51 +758,55 @@ def _workspace_python_api_reexport_names(
     if raw_path.name.lower().startswith("__init__.py"):
         return None
 
-    lines: list[str] | None = None
     init_candidates = (
         (raw_path.parent / "__init__.pyi", raw_path.parent / "__init__.py")
         if raw_path.suffix.lower() == ".pyi"
         else (raw_path.parent / "__init__.py", raw_path.parent / "__init__.pyi")
     )
-    for init_path in init_candidates:
-        lines = _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
-        if lines is not None:
-            break
-    if lines is None:
+    init_sources = [
+        lines
+        for init_path in init_candidates
+        if (
+            lines := _read_workspace_python_lines(str(init_path), workspace_loader=workspace_loader)
+        )
+        is not None
+    ]
+    if not init_sources:
         return set()
 
     package_root = _python_package_root(path)
     exports: set[str] = set()
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if not _is_python_top_level_statement(line):
-            index += 1
-            continue
-        if not PYTHON_IMPORT_START_PATTERN.search(line):
-            index += 1
-            continue
+    for lines in init_sources:
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if not _is_python_top_level_statement(line):
+                index += 1
+                continue
+            if not PYTHON_IMPORT_START_PATTERN.search(line):
+                index += 1
+                continue
 
-        statement_source, index = _collect_python_import_statement(lines, index)
-        try:
-            module = ast.parse(statement_source)
-        except SyntaxError:
-            continue
-        if len(module.body) != 1 or not isinstance(module.body[0], ast.ImportFrom):
-            continue
+            statement_source, index = _collect_python_import_statement(lines, index)
+            try:
+                module = ast.parse(statement_source)
+            except SyntaxError:
+                continue
+            if len(module.body) != 1 or not isinstance(module.body[0], ast.ImportFrom):
+                continue
 
-        statement = module.body[0]
-        module_name = raw_path.stem
-        is_module_reexport = (statement.level > 0 and statement.module == module_name) or (
-            statement.module is not None
-            and package_root is not None
-            and statement.module == f"{package_root}.{module_name}"
-        )
-        if not is_module_reexport:
-            continue
-        if any(alias.name == "*" for alias in statement.names):
-            return None
-        exports.update(alias.name for alias in statement.names if alias.name != "*")
+            statement = module.body[0]
+            module_name = raw_path.stem
+            is_module_reexport = (statement.level > 0 and statement.module == module_name) or (
+                statement.module is not None
+                and package_root is not None
+                and statement.module == f"{package_root}.{module_name}"
+            )
+            if not is_module_reexport:
+                continue
+            if any(alias.name == "*" for alias in statement.names):
+                return None
+            exports.update(alias.name for alias in statement.names if alias.name != "*")
 
     return exports
 
@@ -1610,20 +1614,50 @@ def _extract_python_classes(
     if not has_explicit_all and not allow_implicit_classes:
         return set()
     classes: set[str] = set()
-    for line in lines:
-        if not _is_python_top_level_statement(line):
-            continue
+    scope_stack: list[tuple[str, int, str | None]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        indent = _python_indent_level(line)
+        if line.strip():
+            while scope_stack and indent <= scope_stack[-1][1]:
+                scope_stack.pop()
+
         match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if not match:
+            def_start = PYTHON_DEF_START_PATTERN.search(line)
+            if not def_start:
+                index += 1
+                continue
+            signature_source, index = _collect_python_signature_source(lines, index)
+            if PYTHON_PUBLIC_DEF_PATTERN.search(signature_source):
+                scope_stack.append(("def", indent, None))
             continue
         name = match.group(1)
+        public_name = None
         if name.startswith("_") and not (
             has_explicit_all and explicit_exports is not None and name in explicit_exports
         ):
-            continue
-        if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
-            continue
-        classes.add(name)
+            public_name = None
+        else:
+            public_name = name
+
+        public_class_path = [
+            entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
+        ]
+        has_function_scope = any(entry[0] == "def" for entry in scope_stack)
+        if indent == 0:
+            if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
+                scope_stack.append(("class", indent, public_name))
+                index += 1
+                continue
+            if public_name is not None:
+                classes.add(name)
+        elif public_name is not None and public_class_path and not has_function_scope:
+            classes.add(".".join([*public_class_path, name]))
+
+        scope_stack.append(("class", indent, public_name))
+        index += 1
     return classes
 
 
