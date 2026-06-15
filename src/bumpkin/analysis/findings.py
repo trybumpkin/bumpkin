@@ -161,6 +161,11 @@ def _python_symbol_roots(symbol: str) -> tuple[str, str]:
     return root_class, container
 
 
+def _python_class_scope_is_public(scope_stack: list[tuple[str, int, str | None]]) -> bool:
+    class_entries = [entry for entry in scope_stack if entry[0] == "class"]
+    return all(entry[2] is not None for entry in class_entries)
+
+
 def _is_public_python_member_symbol(
     symbol: str,
     *,
@@ -949,6 +954,11 @@ def _infer_python_member_class_from_workspace(
                 candidate = lines[next_index].strip()
                 if candidate:
                     next_body_line = candidate
+            if not _python_class_scope_is_public(scope_stack):
+                if def_match:
+                    scope_stack.append(("def", indent, None))
+                index = next_index
+                continue
             public_class_path = [
                 entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
             ]
@@ -1550,6 +1560,8 @@ def _extract_python_signatures(
             candidate = version_lines[index][0]
             if _python_indent_level(candidate) > _python_indent_level(line) and candidate.strip():
                 next_body_line = candidate.strip()
+        if _python_indent_level(line) > 0 and not _python_class_scope_is_public(scope_stack):
+            continue
         public_class_path = [
             entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
         ]
@@ -2764,6 +2776,39 @@ def detect_python_api_findings(
                     why=(
                         "The public Python symbol still has the same exported name, but it now "
                         "resolves to a different imported target for downstream users."
+                    ),
+                    path=file_diff.path,
+                    snippet=next(
+                        (
+                            line
+                            for line in (*file_diff.added_lines, *file_diff.removed_lines)
+                            if symbol in line
+                        ),
+                        file_diff.added_lines[0]
+                        if file_diff.added_lines
+                        else (file_diff.removed_lines[0] if file_diff.removed_lines else ""),
+                    ),
+                    counter=counter,
+                )
+            )
+        removed_bound_public_names = removed_local_public_names | set(removed_import_bindings)
+        added_bound_public_names = added_local_public_names | set(added_import_bindings)
+        removed_explicit_binding_symbols = sorted(
+            symbol
+            for symbol in shared_public_exports
+            if symbol in removed_bound_public_names and symbol not in added_bound_public_names
+        )
+        for symbol in removed_explicit_binding_symbols:
+            counter += 1
+            findings.append(
+                _build_finding(
+                    severity="MAJOR",
+                    rule="export_symbol_removed",
+                    confidence="high",
+                    title=f"Removed public Python symbol(s): {symbol}",
+                    why=(
+                        "An explicitly exported Python symbol no longer resolves to a matching "
+                        "public binding for downstream importers."
                     ),
                     path=file_diff.path,
                     snippet=next(

@@ -679,6 +679,24 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_removed_explicit_reexport_binding_under___all__() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,2 +1,2 @@
+ __all__ = ["Client"]
+-from .client import Client
++from .client import Client as ServiceClient
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_symbol_removed" and "Client" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_ignores_comment_only_class_mentions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1004,6 +1022,52 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("Client" in finding.title for finding in findings)
     assert any(finding.rule == "export_symbol_added" for finding in findings)
     assert any("ServiceClient" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_ignores_private_nested_class_methods_in_hunk() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,5 +1,5 @@
+ class Public:
+     class _Helper:
+-        def do(self, x: int = 1) -> int:
++        def do(self, x: int) -> int:
+             return x
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_private_nested_class_methods_via_workspace_inference(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "class Public:\n"
+        "    class _Helper:\n"
+        "        def do(self, x: int) -> int:\n"
+        "            return x\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -3,2 +3,2 @@
+-        def do(self, x: int = 1) -> int:
++        def do(self, x: int) -> int:
+             return x
+"""
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert findings == []
 
 
 def test_detect_python_findings_detects_direct_api_facade_import_rename_without_root_reexport() -> (
