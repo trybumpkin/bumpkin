@@ -552,6 +552,25 @@ diff --git a/pkg/api.py b/pkg/api.py
     assert findings == []
 
 
+def test_detect_python_findings_respects_explicit_underscore___all___exports() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,4 @@
+ __all__ = ["_legacy"]
+-def _legacy(timeout: int = 1) -> int:
++def _legacy(timeout: int) -> int:
+     return timeout
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening" and "_legacy" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_ignores_comment_only_class_mentions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
@@ -1507,6 +1526,42 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
 
     assert any(finding.rule == "python_api_module_local_surface_changed" for finding in findings)
     assert any("helper" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_reexported_private_helper_in_non_api_module(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .client import _create_client as Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "client.py"
+    target.write_text(
+        "def _create_client(timeout: int = 1) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,2 +1,2 @@
+-def _create_client(timeout: int = 1) -> int:
++def _create_client(timeout: int) -> int:
+     return timeout
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "_create_client" in finding.title
+        for finding in findings
+    )
 
 
 def test_detect_python_findings_detects_added_public_submodule_symbol_even_when_not_root_reexported(

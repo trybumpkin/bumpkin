@@ -695,8 +695,7 @@ def _workspace_python_api_reexport_names(
     workspace_loader: WorkspaceLoader | None,
 ) -> set[str] | None:
     raw_path = Path(path.strip())
-    normalized = raw_path.as_posix().lower()
-    if not _is_python_api_surface(normalized):
+    if raw_path.name.lower().startswith("__init__.py"):
         return None
 
     lines: list[str] | None = None
@@ -728,20 +727,17 @@ def _workspace_python_api_reexport_names(
             continue
 
         statement = module.body[0]
-        is_api_reexport = (statement.level > 0 and statement.module == "api") or (
+        module_name = raw_path.stem
+        is_module_reexport = (statement.level > 0 and statement.module == module_name) or (
             statement.module is not None
             and package_root is not None
-            and statement.module == f"{package_root}.api"
+            and statement.module == f"{package_root}.{module_name}"
         )
-        if not is_api_reexport:
+        if not is_module_reexport:
             continue
         if any(alias.name == "*" for alias in statement.names):
             return None
-        exports.update(
-            alias.asname or alias.name
-            for alias in statement.names
-            if not (alias.asname or alias.name).startswith("_")
-        )
+        exports.update(alias.name for alias in statement.names if alias.name != "*")
 
     return exports
 
@@ -1101,16 +1097,16 @@ def _extract_python_all_contract(lines: list[str]) -> _PythonAllContract:
             if not supported:
                 has_unsupported_all = True
                 continue
-            exports = {member for member in values if not member.startswith("_")}
+            exports = set(values)
         elif isinstance(statement, ast.AugAssign) and isinstance(statement.op, ast.Add):
             supported, values = _extract_python_string_names(statement.value)
             if not supported:
                 has_unsupported_all = True
                 continue
             if operator == "=":
-                exports = {member for member in values if not member.startswith("_")}
+                exports = set(values)
             else:
-                exports.update(member for member in values if not member.startswith("_"))
+                exports.update(values)
         else:
             has_unsupported_all = True
     if has_unsupported_all:
@@ -1161,7 +1157,9 @@ def _extract_python_implicit_public_names(
         if def_match:
             name = def_match.group(1)
             params = _split_top_level_params(def_match.group(2))
-            if name.startswith("_"):
+            if name.startswith("_") and (
+                explicit_public_names is None or name not in explicit_public_names
+            ):
                 continue
             if params and params[0].strip() in {"self", "cls"}:
                 continue
@@ -1171,7 +1169,9 @@ def _extract_python_implicit_public_names(
         class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
         if class_match:
             name = class_match.group(1)
-            if not name.startswith("_"):
+            if not name.startswith("_") or (
+                explicit_public_names is not None and name in explicit_public_names
+            ):
                 exports.add(name)
             index += 1
             continue
@@ -1197,7 +1197,10 @@ def _extract_python_implicit_public_names(
         assignment_match = PYTHON_PUBLIC_ASSIGNMENT_PATTERN.search(line)
         if assignment_match:
             name = assignment_match.group(1)
-            if not name.startswith("_") and name != "__all__":
+            if name != "__all__" and (
+                not name.startswith("_")
+                or (explicit_public_names is not None and name in explicit_public_names)
+            ):
                 exports.add(name)
         index += 1
 
@@ -1404,8 +1407,6 @@ def _extract_python_signatures(
                     continue
                 symbol_name = f"{inferred_class}.{name}"
         else:
-            if name.startswith("_"):
-                continue
             if indent > 0:
                 continue
             symbol_name = name
@@ -1436,12 +1437,13 @@ def _extract_python_classes(
         if not match:
             continue
         name = match.group(1)
-        if name.startswith("_"):
+        if name.startswith("_") and not (
+            has_explicit_all and explicit_exports is not None and name in explicit_exports
+        ):
             continue
         if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
             continue
-        if not name.startswith("_"):
-            classes.add(name)
+        classes.add(name)
     return classes
 
 
