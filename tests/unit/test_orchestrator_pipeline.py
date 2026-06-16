@@ -100,7 +100,10 @@ def test_pipeline_run_stays_quiet_in_capture_mode(monkeypatch, capsys) -> None:
         "bumpkin.orchestrator.pipeline.format_recommendation_comment",
         lambda **_kwargs: "<!-- bumpkin:recommendation -->\nbody\n",
     )
-    monkeypatch.setattr("bumpkin.orchestrator.pipeline.post_pr_comment", lambda **_kwargs: None)
+    posted_comments: list[dict[str, object]] = []
+
+    def _capture_comment(**kwargs: object) -> None:
+        posted_comments.append(kwargs)
 
     exit_code = orchestrator_pipeline.run(
         Namespace(
@@ -114,13 +117,15 @@ def test_pipeline_run_stays_quiet_in_capture_mode(monkeypatch, capsys) -> None:
             models_endpoint="https://example.com/v1",
             max_retries=1,
             request_timeout=45,
-        )
+        ),
+        comment_poster=_capture_comment,
     )
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.out == ""
     assert os.environ.get("BUMPKIN_CAPTURE_PR_COMMENT_ONLY") == "1"
+    assert len(posted_comments) == 1
 
 
 def test_pipeline_does_not_call_python_pack_generic_fallback(monkeypatch) -> None:

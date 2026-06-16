@@ -213,7 +213,7 @@ def test_pipeline_runner_uses_github_api_diff_fallback_when_git_refs_unavailable
 
     observed: dict[str, object] = {}
 
-    def fake_run(_: object) -> int:
+    def fake_run(_: object, *, comment_poster=None) -> int:
         diff_result = orchestrator_pipeline.build_diff(
             from_ref="base",
             to_ref="merge",
@@ -226,7 +226,8 @@ def test_pipeline_runner_uses_github_api_diff_fallback_when_git_refs_unavailable
         observed["files"] = diff_result.analyzed_files
         observed["diff"] = diff_result.full_diff_text
         observed["notes"] = diff_result.notes
-        orchestrator_pipeline.post_pr_comment(
+        assert comment_poster is not None
+        comment_poster(
             token="",
             repo="acme/repo",
             pr_number=68,
@@ -287,9 +288,10 @@ def test_pipeline_runner_uses_capture_only_mode_for_release_scope(monkeypatch) -
 
     observed: dict[str, object] = {}
 
-    def fake_run(_: object) -> int:
+    def fake_run(_: object, *, comment_poster=None) -> int:
         observed["capture_only"] = os.environ.get("BUMPKIN_CAPTURE_PR_COMMENT_ONLY")
-        orchestrator_pipeline.post_pr_comment(
+        assert comment_poster is not None
+        comment_poster(
             token="",
             repo="acme/repo",
             pr_number=69,
