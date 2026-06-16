@@ -559,7 +559,6 @@ class PipelineRecommendationRunner:
             event_path = event_file.name
 
         capture: dict[str, str] = {}
-        original_post_pr_comment = orchestrator_pipeline.post_pr_comment
         original_build_diff = orchestrator_pipeline.build_diff
 
         def _capture_post_pr_comment(
@@ -572,7 +571,6 @@ class PipelineRecommendationRunner:
             _ = token, repo, pr_number
             capture["body"] = body
 
-        orchestrator_pipeline.post_pr_comment = _capture_post_pr_comment
         if fallback_diff_builder is not None:
             orchestrator_pipeline.build_diff = fallback_diff_builder
         env_updates = {
@@ -599,14 +597,13 @@ class PipelineRecommendationRunner:
         try:
             for key, value in env_updates.items():
                 os.environ[key] = value
-            exit_code = orchestrator_pipeline.run(args)
+            exit_code = orchestrator_pipeline.run(args, comment_poster=_capture_post_pr_comment)
         finally:
             for key, value in previous_env.items():
                 if value is None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-            orchestrator_pipeline.post_pr_comment = original_post_pr_comment
             orchestrator_pipeline.build_diff = original_build_diff
             with suppress(FileNotFoundError):
                 Path(event_path).unlink()

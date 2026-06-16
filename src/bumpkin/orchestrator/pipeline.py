@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from argparse import Namespace
+from typing import Protocol
 
 from bumpkin.analysis.diffing import DEFAULT_IGNORES, build_diff, resolve_refs
 from bumpkin.analysis.language import detect_language_groups, detect_language_hints
@@ -15,6 +16,10 @@ from bumpkin.orchestrator import scope as orchestrator_scope
 from bumpkin.planner import plan_analysis_route
 from bumpkin.policies import engine as policy_engine
 from bumpkin.prompt_pack import get_prompt_metadata
+
+
+class CommentPoster(Protocol):
+    def __call__(self, *, token: str, repo: str, pr_number: int, body: str) -> None: ...
 
 
 def _parse_optional_bool(value: str | None) -> bool | None:
@@ -69,11 +74,12 @@ def _fallback_config() -> BumpkinConfig:
     )
 
 
-def run(args: Namespace) -> int:
+def run(args: Namespace, *, comment_poster: CommentPoster | None = None) -> int:
     repo = os.getenv("GITHUB_REPOSITORY", "")
     github_token = os.getenv("GITHUB_TOKEN", "")
     event_path = os.getenv("GITHUB_EVENT_PATH")
     event_context = orchestrator_scope.read_event_context(event_path)
+    resolved_comment_poster = post_pr_comment if comment_poster is None else comment_poster
 
     from_ref_input, to_ref_input, notes = orchestrator_scope.select_diff_scope(
         args.from_ref,
@@ -275,7 +281,7 @@ def run(args: Namespace) -> int:
         proof_obligations=core_result.proof_obligations,
         contradictions=core_result.contradictions,
     )
-    post_pr_comment(token=github_token, repo=repo, pr_number=pr_number, body=body)
+    resolved_comment_poster(token=github_token, repo=repo, pr_number=pr_number, body=body)
     if _capture_pr_comment_only():
         return 0
     print(f"Posted recommendation comment to PR #{pr_number}.")

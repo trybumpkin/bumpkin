@@ -1,4 +1,4 @@
-from bumpkin.orchestrator import explanation_facts as facts_module
+from bumpkin.analysis import explanation_facts as facts_module
 
 
 def test_build_explanation_facts_patch_includes_scope_and_hint() -> None:

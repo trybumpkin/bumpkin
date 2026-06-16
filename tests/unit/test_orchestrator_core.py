@@ -759,12 +759,12 @@ def test_polish_explanation_attempts_repair_on_non_json_output(monkeypatch) -> N
         )
 
     monkeypatch.setattr(
-        core_module.urllib.request,
+        core_module.explanation_polish.urllib.request,
         "urlopen",
         lambda *_args, **_kwargs: _FakeResponse(),
     )
-    monkeypatch.setattr(core_module, "_attempt_polish_repair", _fake_repair)
-    monkeypatch.setattr(core_module, "apply_model_call_interval", lambda: None)
+    monkeypatch.setattr(core_module.explanation_polish, "_attempt_polish_repair", _fake_repair)
+    monkeypatch.setattr(core_module.explanation_polish, "apply_model_call_interval", lambda: None)
 
     reasoning, changelog, applied, error = core_module._polish_explanation_with_model(
         advisory_label="PATCH",

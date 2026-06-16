@@ -3,8 +3,8 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Iterable
 
+from bumpkin.analysis import explanation_facts as explanation_dsl
 from bumpkin.analysis.case_file import CASE_FILE_VERSION
-from bumpkin.orchestrator import explanation_facts as explanation_dsl
 
 COVERAGE_VERSION = "coverage_contract_v1"
 
