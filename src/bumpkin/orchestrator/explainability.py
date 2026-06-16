@@ -5,10 +5,15 @@ import re
 from typing import Any, cast
 
 from bumpkin.analysis import explanation_facts as explanation_dsl
+from bumpkin.analysis import semantic_review
 from bumpkin.orchestrator import explanation_polish
 
 CHANGELOG_PATTERN = explanation_polish.CHANGELOG_PATTERN
 _is_human_readable_explanation = explanation_polish.is_human_readable_explanation
+_row_has_semantic_transition = semantic_review.row_has_semantic_transition
+_row_satisfies_patch_transition = semantic_review.row_satisfies_patch_transition
+_evaluate_proof_obligations = semantic_review.evaluate_proof_obligations
+_critical_missing_proof_obligations = semantic_review.critical_missing_proof_obligations
 
 
 def _as_object_list(value: object) -> list[object] | None:
@@ -537,103 +542,6 @@ def _build_explainability_rows(
                 max_items=max_items,
             )
     return []
-
-
-def _row_has_semantic_transition(row: dict[str, str]) -> bool:
-    before = str(row.get("before", "")).strip()
-    after = str(row.get("after", "")).strip()
-    if before and after:
-        return True
-    action = str(row.get("action", "")).strip().lower()
-    return action in {"added", "removed", "renamed", "tightened", "unchanged"}
-
-
-def _row_satisfies_patch_transition(row: dict[str, str]) -> bool:
-    impact_scope = str(row.get("impact_scope", "")).strip().lower()
-    suggested_bump = str(row.get("suggested_bump", "")).strip().upper()
-    if impact_scope != "runtime_internal" or suggested_bump != "PATCH":
-        return False
-    return _row_has_semantic_transition(row)
-
-
-def _evaluate_proof_obligations(
-    *,
-    status: str,
-    evaluated_label: str | None,
-    semantic_facts: list[dict[str, str]],
-) -> dict[str, Any]:
-    required: list[str] = [
-        "semantic_fact_present",
-        "semantic_fact_evidence_path_present",
-        "semantic_fact_transition_present",
-    ]
-    label = str(evaluated_label or "").strip().upper()
-    if label == "PATCH":
-        required.append("runtime_delta_transition_present")
-    if label == "NO_BUMP":
-        required.append("runtime_invariance_fact_present")
-
-    fact_present = bool(semantic_facts)
-    has_paths = fact_present and all(str(item.get("path", "")).strip() for item in semantic_facts)
-    has_transitions = fact_present and all(
-        _row_has_semantic_transition(item) for item in semantic_facts
-    )
-    patch_transition = (
-        any(_row_satisfies_patch_transition(item) for item in semantic_facts)
-        if label == "PATCH"
-        else True
-    )
-    no_bump_invariance = (
-        any(
-            str(item.get("rule", "")).strip().lower() == "runtime_contract_unchanged"
-            and str(item.get("before", "")).strip() == "runtime contract unchanged"
-            and str(item.get("after", "")).strip() == "runtime contract unchanged"
-            for item in semantic_facts
-        )
-        if label == "NO_BUMP"
-        else True
-    )
-
-    checks = {
-        "semantic_fact_present": fact_present,
-        "semantic_fact_evidence_path_present": has_paths,
-        "semantic_fact_transition_present": has_transitions,
-        "runtime_delta_transition_present": patch_transition,
-        "runtime_invariance_fact_present": no_bump_invariance,
-    }
-    satisfied = [item for item in required if checks.get(item, False)]
-    missing = [item for item in required if not checks.get(item, False)]
-
-    critical_policy = {
-        "semantic_fact_present",
-        "semantic_fact_evidence_path_present",
-        "runtime_delta_transition_present",
-        "runtime_invariance_fact_present",
-    }
-    critical_missing = [item for item in missing if item in critical_policy]
-    return {
-        "version": "proof_obligations_v1",
-        "evaluated_label": label or None,
-        "status": status,
-        "required": required,
-        "satisfied": satisfied,
-        "missing": missing,
-        "critical_missing": critical_missing,
-    }
-
-
-def _critical_missing_proof_obligations(proof_obligations: dict[str, Any]) -> list[str]:
-    raw_missing = _as_object_list(proof_obligations.get("critical_missing", []))
-    if raw_missing is None:
-        return []
-    normalized: list[str] = []
-    for value in raw_missing:
-        if not isinstance(value, str):
-            continue
-        item = value.strip()
-        if item:
-            normalized.append(item)
-    return normalized
 
 
 changelog_for_label = _changelog_for_label
