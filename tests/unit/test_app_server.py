@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from bumpkin.app.server import build_self_host_wsgi_app
-from bumpkin.app.webhook import WebhookResponse
+from bumpkin.integrations.github.server import build_self_host_wsgi_app
+from bumpkin.integrations.github.webhook import WebhookResponse
 
 
 @dataclass

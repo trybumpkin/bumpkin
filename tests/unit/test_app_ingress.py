@@ -5,7 +5,7 @@ import json
 from collections.abc import Mapping
 from hashlib import sha256
 
-from bumpkin.app.ingress import (
+from bumpkin.integrations.github.ingress import (
     OUTCOME_ACCEPTED,
     OUTCOME_DUPLICATE_IGNORED,
     OUTCOME_REJECTED_SIGNATURE,
@@ -15,7 +15,7 @@ from bumpkin.app.ingress import (
     ingest_webhook_event,
     verify_github_signature,
 )
-from bumpkin.app.persistence import SqliteAppStateStore
+from bumpkin.integrations.github.persistence import SqliteAppStateStore
 
 
 def _canonical_body(payload: Mapping[str, object]) -> bytes:

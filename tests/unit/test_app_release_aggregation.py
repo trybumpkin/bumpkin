@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bumpkin.app.persistence import ReleaseBacklogItem
-from bumpkin.app.release_aggregation import aggregate_release_backlog
+from bumpkin.integrations.github.persistence import ReleaseBacklogItem
+from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
 
 
 def _item(

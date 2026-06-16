@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bumpkin.app.contracts import (
+from bumpkin.integrations.github.contracts import (
     app_event_envelope_to_payload,
     app_event_to_payload,
     approval_record_to_payload,
@@ -13,9 +13,9 @@ from bumpkin.app.contracts import (
     validate_approval_record_payload,
     validate_ingress_result_payload,
 )
-from bumpkin.app.guards import ApprovalRecord
-from bumpkin.app.ingress import AppEventEnvelope, IngressResult
-from bumpkin.app.types import AppEvent, SlashCommand
+from bumpkin.integrations.github.guards import ApprovalRecord
+from bumpkin.integrations.github.ingress import AppEventEnvelope, IngressResult
+from bumpkin.integrations.github.types import AppEvent, SlashCommand
 
 
 def test_app_event_payload_contract_round_trip() -> None:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bumpkin.app.guards import ApprovalRecord, PublishGuardDecision
-from bumpkin.app.ingress import AppEventEnvelope
-from bumpkin.app.persistence import SqliteAppStateStore, build_app_state_store
-from bumpkin.app.types import AppEvent
+from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
+from bumpkin.integrations.github.ingress import AppEventEnvelope
+from bumpkin.integrations.github.persistence import SqliteAppStateStore, build_app_state_store
+from bumpkin.integrations.github.types import AppEvent
 
 
 def _build_event_and_envelope(
@@ -130,7 +130,9 @@ def test_build_app_state_store_prefers_database_url(monkeypatch) -> None:
         calls.append(database_url)
         return sentinel
 
-    monkeypatch.setattr("bumpkin.app.persistence.PostgresAppStateStore", fake_postgres_store)
+    monkeypatch.setattr(
+        "bumpkin.integrations.github.persistence.PostgresAppStateStore", fake_postgres_store
+    )
 
     store = build_app_state_store(
         db_path="var/bumpkin.sqlite3",

@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from bumpkin.app.guards import ApprovalRecord, PublishGuardDecision
-from bumpkin.app.ingress import AppEventEnvelope, IngressResult
-from bumpkin.app.types import AppEvent, SlashCommand
+from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
+from bumpkin.integrations.github.ingress import AppEventEnvelope, IngressResult
+from bumpkin.integrations.github.types import AppEvent, SlashCommand
 
 
 def slash_command_to_payload(command: SlashCommand) -> dict[str, Any]:

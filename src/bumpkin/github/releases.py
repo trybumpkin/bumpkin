@@ -1,4 +1,4 @@
-from bumpkin.app.releases import (
+from bumpkin.integrations.github.releases import (
     GitHubReleasePublisher,
     NoopReleasePublisher,
     ReleasePublisher,

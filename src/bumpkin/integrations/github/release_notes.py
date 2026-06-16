@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
-from bumpkin.app.persistence import ReleaseBacklogItem
+from bumpkin.integrations.github.persistence import ReleaseBacklogItem
 
 _SECTION_BY_LABEL = {
     "MAJOR": "Breaking Changes",

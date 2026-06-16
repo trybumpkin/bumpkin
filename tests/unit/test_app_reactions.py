@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bumpkin.app.reactions import (
+from bumpkin.integrations.github.reactions import (
     REACTION_COMMENT_MARKER,
     NoopReactionPublisher,
     ReactionPublishRequest,

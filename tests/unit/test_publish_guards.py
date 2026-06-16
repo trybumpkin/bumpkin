@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bumpkin.app.guards import ApprovalRecord, evaluate_publish_guard
+from bumpkin.integrations.github.guards import ApprovalRecord, evaluate_publish_guard
 
 
 def test_publish_guard_blocks_stale_approval() -> None:

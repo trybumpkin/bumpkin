@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bumpkin.app.runtime import load_app_runtime_config
+from bumpkin.integrations.github.runtime import load_app_runtime_config
 
 
 def test_load_app_runtime_config_requires_secret_only_in_shell_mode() -> None:

@@ -1,4 +1,4 @@
-from bumpkin.app.tags import (
+from bumpkin.integrations.github.tags import (
     GitHubTagPublisher,
     NoopTagPublisher,
     TagPublisher,

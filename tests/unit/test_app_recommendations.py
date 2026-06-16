@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 import subprocess
 
-from bumpkin.app.recommendations import (
+from bumpkin.integrations.github.recommendations import (
     MergeRecommendationRequest,
     PipelineRecommendationRunner,
     _ensure_event_refs_available,
     _extract_label,
 )
-from bumpkin.app.types import AppEvent
+from bumpkin.integrations.github.types import AppEvent
 from bumpkin.orchestrator import pipeline as orchestrator_pipeline
 
 
@@ -73,7 +73,7 @@ def test_ensure_event_refs_available_fetches_base_ref_before_head_ref(monkeypatc
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr("bumpkin.app.recommendations._run_git", fake_run_git)
+    monkeypatch.setattr("bumpkin.integrations.github.recommendations._run_git", fake_run_git)
 
     _ensure_event_refs_available(event)
 
@@ -108,7 +108,7 @@ def test_ensure_event_refs_available_skips_fetch_when_merge_sha_exists(monkeypat
             return args[2]
         raise AssertionError(args)
 
-    monkeypatch.setattr("bumpkin.app.recommendations._run_git", fake_run_git)
+    monkeypatch.setattr("bumpkin.integrations.github.recommendations._run_git", fake_run_git)
 
     _ensure_event_refs_available(event)
 
@@ -151,7 +151,7 @@ def test_ensure_event_refs_available_raises_when_non_merged_head_ref_fetch_fails
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr("bumpkin.app.recommendations._run_git", fake_run_git)
+    monkeypatch.setattr("bumpkin.integrations.github.recommendations._run_git", fake_run_git)
 
     try:
         _ensure_event_refs_available(event)
@@ -199,9 +199,11 @@ def test_pipeline_runner_uses_github_api_diff_fallback_when_git_refs_unavailable
     def fake_ensure(_: AppEvent) -> None:
         raise RuntimeError("git unavailable")
 
-    monkeypatch.setattr("bumpkin.app.recommendations._ensure_event_refs_available", fake_ensure)
     monkeypatch.setattr(
-        "bumpkin.app.recommendations._fetch_pull_request_files",
+        "bumpkin.integrations.github.recommendations._ensure_event_refs_available", fake_ensure
+    )
+    monkeypatch.setattr(
+        "bumpkin.integrations.github.recommendations._fetch_pull_request_files",
         lambda **_: [
             {
                 "filename": "src/example.py",
@@ -239,7 +241,9 @@ def test_pipeline_runner_uses_github_api_diff_fallback_when_git_refs_unavailable
         )
         return 0
 
-    monkeypatch.setattr("bumpkin.app.recommendations.orchestrator_pipeline.run", fake_run)
+    monkeypatch.setattr(
+        "bumpkin.integrations.github.recommendations.orchestrator_pipeline.run", fake_run
+    )
 
     recommendation = runner.generate(
         MergeRecommendationRequest(
@@ -282,7 +286,7 @@ def test_pipeline_runner_uses_capture_only_mode_for_release_scope(monkeypatch) -
     )
 
     monkeypatch.setattr(
-        "bumpkin.app.recommendations._ensure_event_refs_available",
+        "bumpkin.integrations.github.recommendations._ensure_event_refs_available",
         lambda _event: None,
     )
 
@@ -303,7 +307,9 @@ def test_pipeline_runner_uses_capture_only_mode_for_release_scope(monkeypatch) -
         )
         return 0
 
-    monkeypatch.setattr("bumpkin.app.recommendations.orchestrator_pipeline.run", fake_run)
+    monkeypatch.setattr(
+        "bumpkin.integrations.github.recommendations.orchestrator_pipeline.run", fake_run
+    )
 
     recommendation = runner.generate(
         MergeRecommendationRequest(
@@ -341,7 +347,9 @@ def test_pipeline_runner_requires_provider_token_for_api_fallback(monkeypatch) -
     def fake_ensure(_: AppEvent) -> None:
         raise RuntimeError("git unavailable")
 
-    monkeypatch.setattr("bumpkin.app.recommendations._ensure_event_refs_available", fake_ensure)
+    monkeypatch.setattr(
+        "bumpkin.integrations.github.recommendations._ensure_event_refs_available", fake_ensure
+    )
 
     try:
         runner.generate(
