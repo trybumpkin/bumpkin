@@ -309,6 +309,46 @@ diff --git a/setup.py b/setup.py
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_support_floor_raise_in_setup_py_named_constant() -> None:
+    diff_text = """
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -1,4 +1,4 @@
+-PY_REQ = ">=3.9"
++PY_REQ = ">=3.10"
+ setup(
+     python_requires=PY_REQ,
+ )
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_in_setup_py_helper_return() -> None:
+    diff_text = """
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -1,6 +1,6 @@
+ def py_req():
+-    return ">=3.9"
++    return ">=3.10"
+
+ setup(
+     python_requires=py_req(),
+ )
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
 def test_detect_python_findings_detects_reexported_private_helper_from_parent_package_under_python_source_root(
     tmp_path: Path,
     monkeypatch,
@@ -443,6 +483,24 @@ diff --git a/setup.py b/setup.py
     findings = detect_python_api_findings(diff_text)
 
     assert findings == []
+
+
+def test_detect_python_findings_support_floor_raise_in_setup_cfg_continuation_line() -> None:
+    diff_text = """
+diff --git a/setup.cfg b/setup.cfg
+--- a/setup.cfg
++++ b/setup.cfg
+@@ -1,3 +1,3 @@
+ [options]
+ python_requires =
+-    >=3.9
++    >=3.10
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
 
 
 def test_detect_python_findings_ignores_setup_py_python_requires_in_multiline_string() -> None:

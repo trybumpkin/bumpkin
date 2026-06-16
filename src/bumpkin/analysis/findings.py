@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import configparser
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -1808,12 +1809,83 @@ def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | 
     return tuple(int(part) for part in match.group(1).split("."))
 
 
+def _resolve_setup_py_string_value(
+    node: ast.AST | None,
+    *,
+    constants: dict[str, str],
+    helpers: dict[str, str],
+) -> str | None:
+    if node is None:
+        return None
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, SyntaxError):
+        value = None
+    if isinstance(value, str):
+        return value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id) or helpers.get(node.id)
+    if (
+        isinstance(node, ast.Call)
+        and not node.args
+        and not node.keywords
+        and isinstance(node.func, ast.Name)
+    ):
+        return helpers.get(node.func.id)
+    return None
+
+
+def _extract_setup_py_top_level_strings(
+    module: ast.Module,
+) -> tuple[dict[str, str], dict[str, str]]:
+    constants: dict[str, str] = {}
+    helpers: dict[str, str] = {}
+
+    for statement in module.body:
+        if isinstance(statement, ast.Assign):
+            resolved_value = _resolve_setup_py_string_value(
+                statement.value,
+                constants=constants,
+                helpers=helpers,
+            )
+            if resolved_value is None:
+                continue
+            for target in statement.targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = resolved_value
+        elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            resolved_value = _resolve_setup_py_string_value(
+                statement.value,
+                constants=constants,
+                helpers=helpers,
+            )
+            if resolved_value is not None:
+                constants[statement.target.id] = resolved_value
+        elif isinstance(statement, ast.FunctionDef):
+            if statement.args.args or statement.args.kwonlyargs:
+                continue
+            if statement.args.vararg or statement.args.kwarg:
+                continue
+            if len(statement.body) != 1 or not isinstance(statement.body[0], ast.Return):
+                continue
+            resolved_value = _resolve_setup_py_string_value(
+                statement.body[0].value,
+                constants=constants,
+                helpers=helpers,
+            )
+            if resolved_value is not None:
+                helpers[statement.name] = resolved_value
+
+    return constants, helpers
+
+
 def _extract_setup_py_python_requires_floor(lines: list[str]) -> tuple[int, ...] | None:
     source = "\n".join(lines)
     try:
         module = ast.parse(source)
     except SyntaxError:
         return None
+    constants, helpers = _extract_setup_py_top_level_strings(module)
     for node in ast.walk(module):
         if not isinstance(node, ast.Call):
             continue
@@ -1827,15 +1899,55 @@ def _extract_setup_py_python_requires_floor(lines: list[str]) -> tuple[int, ...]
         for keyword in node.keywords:
             if keyword.arg != "python_requires":
                 continue
-            try:
-                value = ast.literal_eval(keyword.value)
-            except (ValueError, SyntaxError):
-                continue
+            value = _resolve_setup_py_string_value(
+                keyword.value,
+                constants=constants,
+                helpers=helpers,
+            )
             if not isinstance(value, str):
                 continue
             floor = _extract_python_floor_from_constraint(value)
             if floor is not None:
                 return floor
+    return None
+
+
+def _extract_setup_cfg_python_requires_floor(lines: list[str]) -> tuple[int, ...] | None:
+    source = "\n".join(lines)
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read_string(source)
+    except (configparser.Error, TypeError, ValueError):
+        parser = None
+    if parser is not None:
+        for section_name in ("options", "metadata"):
+            if not parser.has_option(section_name, "python_requires"):
+                continue
+            floor = _extract_python_floor_from_constraint(
+                parser.get(section_name, "python_requires")
+            )
+            if floor is not None:
+                return floor
+
+    current_key: str | None = None
+    value_lines: list[str] = []
+    for line in lines:
+        match = SETUP_CFG_PYTHON_REQUIRES_PATTERN.search(line)
+        if match:
+            current_key = "python_requires"
+            value_lines = [match.group(1).strip()]
+            floor = _extract_python_floor_from_constraint(" ".join(value_lines).strip())
+            if floor is not None:
+                return floor
+            continue
+        if current_key == "python_requires" and line[:1].isspace():
+            value_lines.append(line.strip())
+            floor = _extract_python_floor_from_constraint(" ".join(value_lines).strip())
+            if floor is not None:
+                return floor
+            continue
+        current_key = None
+        value_lines = []
     return None
 
 
@@ -1845,14 +1957,7 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
 
     metadata_kind = _python_packaging_metadata_kind(path)
     if metadata_kind == "setup.cfg":
-        for line in lines:
-            match = SETUP_CFG_PYTHON_REQUIRES_PATTERN.search(line)
-            if not match:
-                continue
-            floor = _extract_python_floor_from_constraint(match.group(1))
-            if floor is not None:
-                return floor
-        return None
+        return _extract_setup_cfg_python_requires_floor(lines)
 
     if metadata_kind == "setup.py":
         return _extract_setup_py_python_requires_floor(lines)
