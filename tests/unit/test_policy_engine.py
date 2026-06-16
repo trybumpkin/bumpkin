@@ -41,11 +41,11 @@ def test_python_requires_floor_raise_respects_public_hints() -> None:
 def test_python_requires_floor_raise_in_root_metadata_counts_as_public_with_hints() -> None:
     finding = _python_floor_finding("pyproject.toml")
 
-    assert classify_finding_boundary(finding, public_hints=["src/**"]) == "public"
+    assert classify_finding_boundary(finding, public_hints=["src/**"]) == "unknown"
     assert summarize_boundary([finding], public_hints=["src/**"]) == {
-        "public": 1,
+        "public": 0,
         "internal": 0,
-        "unknown": 0,
+        "unknown": 1,
     }
 
 
@@ -63,13 +63,13 @@ def test_python_requires_floor_raise_stays_internal_for_internal_tool_path() -> 
 def test_python_requires_floor_raise_only_counts_as_public_evidence_when_boundary_is_public() -> (
     None
 ):
-    public_finding = _python_floor_finding("pyproject.toml")
+    public_finding = _python_floor_finding("src/pkg/pyproject.toml")
     internal_finding = _python_floor_finding("tools/internal/pyproject.toml")
     unknown_finding = _python_floor_finding("pyproject.toml")
 
     public_summary = summarize_evidence(
         [public_finding],
-        public_hints=["src/**"],
+        public_hints=["src/pkg/**"],
         contract_signals={},
     )
     internal_summary = summarize_evidence(

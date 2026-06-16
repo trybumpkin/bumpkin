@@ -24,9 +24,9 @@ def test_detect_language_groups_treats_pyw_files_as_python() -> None:
     assert groups == ["python"]
 
 
-def test_detect_language_groups_does_not_treat_packaging_metadata_alone_as_python() -> None:
+def test_detect_language_groups_treats_packaging_metadata_as_python() -> None:
     groups = detect_language_groups(["pyproject.toml", "setup.cfg"])
-    assert groups == []
+    assert groups == ["python"]
 
 
 def test_detect_language_groups_keeps_python_when_metadata_changes_with_python_files() -> None:

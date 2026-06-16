@@ -139,7 +139,7 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
             return "unknown"
         if path_matches_hints(path, public_hints):
             return "public"
-        return "public"
+        return "unknown"
     if is_docs_or_config_path(path):
         return "internal"
     if not public_hints:
