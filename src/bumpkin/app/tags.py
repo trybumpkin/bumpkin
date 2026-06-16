@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
+
+from bumpkin.app.github_http import format_github_http_error, github_request_json
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +88,9 @@ class GitHubTagPublisher:
                     url=_tag_url(repository=repository, tag_name=tag_name),
                     message="tag_already_exists",
                 )
-            raise RuntimeError(_format_http_error(err)) from err
+            raise RuntimeError(
+                format_github_http_error(err, prefix="GitHub tag API error")
+            ) from err
 
         return TagPublishResult(
             status="created",
@@ -102,21 +105,15 @@ class GitHubTagPublisher:
         method: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
+        response, _headers = github_request_json(
+            url=url,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-            },
+            timeout_seconds=self._timeout_seconds,
+            token=self._token,
+            user_agent=self._user_agent,
+            payload=payload,
         )
-        with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-            body = response.read().decode("utf-8")
-        return json.loads(body) if body else {}
+        return response
 
     def _is_ref_exists_error(self, err: urllib.error.HTTPError) -> bool:
         try:
@@ -138,17 +135,6 @@ class GitHubTagPublisher:
 
 def _tag_url(*, repository: str, tag_name: str) -> str:
     return f"https://github.com/{repository}/releases/tag/{urllib.parse.quote(tag_name, safe='')}"
-
-
-def _format_http_error(err: urllib.error.HTTPError) -> str:
-    try:
-        body = err.read().decode("utf-8")
-    except Exception:  # noqa: BLE001 - preserve best-effort error details
-        body = ""
-    detail = body.strip()
-    if detail:
-        return f"GitHub tag API error {err.code}: {detail}"
-    return f"GitHub tag API error {err.code}: {err.reason}"
 
 
 __all__ = [

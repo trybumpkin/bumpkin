@@ -5,8 +5,6 @@ import json
 import os
 import re
 import subprocess
-import urllib.parse
-import urllib.request
 from argparse import Namespace
 from collections.abc import Mapping
 from contextlib import suppress
@@ -15,6 +13,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 
+from bumpkin.app.github_http import collect_paginated_github_json_list, github_request_json
 from bumpkin.app.types import AppEvent
 from bumpkin.io.tokens import is_valid_models_endpoint
 from bumpkin.orchestrator import pipeline as orchestrator_pipeline
@@ -190,53 +189,19 @@ def _cap_file_diff(block: str, max_chars: int) -> tuple[str, bool]:
     return capped, True
 
 
-def _parse_next_link(link_header: str | None) -> str | None:
-    if not link_header:
-        return None
-    for part in link_header.split(","):
-        section = part.strip()
-        if 'rel="next"' not in section:
-            continue
-        match = re.search(r"<([^>]+)>", section)
-        if match:
-            return match.group(1).strip()
-    return None
-
-
-def _github_api_get_json(
-    *, url: str, token: str, timeout_seconds: int = 10
-) -> tuple[object, str | None]:
-    request = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "bumpkin-app",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        body = response.read().decode("utf-8")
-        link_header = response.headers.get("Link")
-    payload = json.loads(body) if body else []
-    return payload, link_header
-
-
 def _fetch_pull_request_files(
     *, repository: str, pr_number: int, token: str
 ) -> list[Mapping[str, object]]:
     if not token.strip():
         raise RuntimeError("github api fallback requires a provider token.")
     url = f"https://api.github.com/repos/{repository}/pulls/{pr_number}/files?per_page=100"
-    files: list[Mapping[str, object]] = []
-    next_url: str | None = url
-    while next_url:
-        payload, link_header = _github_api_get_json(url=next_url, token=token)
-        if not isinstance(payload, list):
-            raise RuntimeError("unexpected GitHub PR files response shape.")
-        files.extend(item for item in payload if isinstance(item, Mapping))
-        next_url = _parse_next_link(link_header)
-    return files
+    payload = collect_paginated_github_json_list(
+        url=url,
+        token=token,
+        user_agent="bumpkin-app",
+        timeout_seconds=10,
+    )
+    return [item for item in payload if isinstance(item, Mapping)]
 
 
 def _build_git_block_from_pr_file(file_item: Mapping[str, object]) -> tuple[str, str]:
@@ -481,21 +446,15 @@ class GitHubRecommendationCommentPublisher:
         method: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
+        response, _headers = github_request_json(
+            url=url,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-            },
+            timeout_seconds=self._timeout_seconds,
+            token=self._token,
+            user_agent=self._user_agent,
+            payload=payload,
         )
-        with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-            content = response.read().decode("utf-8")
-        return json.loads(content) if content else {}
+        return response
 
 
 class PipelineRecommendationRunner:

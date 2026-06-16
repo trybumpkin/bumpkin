@@ -9,13 +9,17 @@ import re
 import subprocess
 import urllib.error
 import urllib.parse
-import urllib.request
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
 
+from bumpkin.app.github_http import (
+    format_github_http_error,
+    github_request_bytes,
+    github_request_json,
+)
 from bumpkin.github.recommendations import (
     MergeRecommendation,
     MergeRecommendationRequest,
@@ -479,36 +483,20 @@ def _bytes_request(
     url: str,
     timeout_seconds: int,
 ) -> bytes:
-    class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
-            redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if redirected is None:
-                return None
-            original_host = urllib.parse.urlparse(req.full_url).netloc
-            redirected_host = urllib.parse.urlparse(newurl).netloc
-            if original_host and redirected_host and original_host != redirected_host:
-                redirected.headers.pop("Authorization", None)
-            return redirected
-
-    request = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "bumpkin-release-job",
-        },
-    )
-    opener = urllib.request.build_opener(_GitHubRedirectHandler)
     try:
-        with opener.open(request, timeout=max(1, timeout_seconds)) as response:
-            body = response.read()
+        body, _headers = github_request_bytes(
+            url=url,
+            method="GET",
+            timeout_seconds=timeout_seconds,
+            token=token,
+            user_agent="bumpkin-release-job",
+            strip_auth_on_cross_host_redirects=True,
+        )
+        return body
     except urllib.error.HTTPError as err:
-        detail = err.read().decode("utf-8", errors="ignore").strip()
-        raise RuntimeError(f"GitHub API error {err.code}: {detail or err.reason}") from err
+        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
     except urllib.error.URLError as err:
         raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
-    return body
 
 
 def _json_request(
@@ -517,9 +505,19 @@ def _json_request(
     url: str,
     timeout_seconds: int,
 ) -> object:
-    body = _bytes_request(token=token, url=url, timeout_seconds=timeout_seconds)
-    text = body.decode("utf-8")
-    return json.loads(text) if text else None
+    try:
+        payload, _headers = github_request_json(
+            url=url,
+            method="GET",
+            timeout_seconds=timeout_seconds,
+            token=token,
+            user_agent="bumpkin-release-job",
+        )
+        return payload
+    except urllib.error.HTTPError as err:
+        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
+    except urllib.error.URLError as err:
+        raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
 
 
 class GitHubRepositoryClient:

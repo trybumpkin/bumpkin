@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
-import urllib.request
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Protocol
 from urllib.parse import quote
+
+from bumpkin.app.github_http import github_request_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,19 +81,14 @@ class GitHubWorkflowDispatcher:
         if request.base_tag is not None and request.base_tag.strip():
             inputs["base_tag"] = request.base_tag.strip()
         payload = {"ref": ref, "inputs": inputs}
-        api_request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
+        github_request_bytes(
+            url=url,
             method="POST",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-            },
+            timeout_seconds=self._timeout_seconds,
+            token=self._token,
+            user_agent=self._user_agent,
+            payload=payload,
         )
-        with urllib.request.urlopen(api_request, timeout=self._timeout_seconds):
-            pass
         workflow_page = PurePosixPath(workflow_id).name
         return WorkflowDispatchResult(
             status="queued",

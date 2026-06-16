@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import re
-import urllib.request
 from typing import Any, cast
+
+from bumpkin.app.github_http import github_request_json
 
 COMMENT_MARKER = "<!-- bumpkin:recommendation -->"
 BUMPKIN_TITLES = (
@@ -732,25 +732,15 @@ def _find_existing_bumpkin_comment_id(comments: list[dict[str, Any]]) -> int | N
 
 
 def _api_request(token: str, url: str, method: str, payload: dict[str, Any] | None = None) -> Any:
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(
-        url,
-        data=data,
+    response, _headers = github_request_json(
+        url=url,
         method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "User-Agent": "bumpkin",
-        },
+        timeout_seconds=10,
+        token=token,
+        user_agent="bumpkin",
+        payload=payload,
     )
-    with urllib.request.urlopen(req) as response:
-        if response.status < 200 or response.status >= 300:
-            raise RuntimeError(
-                f"GitHub API request failed: {method} {url} -> HTTP {response.status}"
-            )
-        content = response.read().decode("utf-8")
-    return json.loads(content) if content else None
+    return response
 
 
 def post_pr_comment(token: str, repo: str, pr_number: int, body: str) -> None:
