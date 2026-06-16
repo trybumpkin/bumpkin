@@ -15,25 +15,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
 
-from bumpkin.github.recommendations import (
+from bumpkin.integrations.github.recommendations import (
     MergeRecommendation,
     MergeRecommendationRequest,
     PipelineRecommendationRunner,
     RecommendationRunner,
 )
-from bumpkin.github.releases import (
+from bumpkin.integrations.github.releases import (
     GitHubReleasePublisher,
     ReleasePublisher,
     ReleasePublishRequest,
     ReleasePublishResult,
 )
-from bumpkin.github.tags import (
+from bumpkin.integrations.github.tags import (
     GitHubTagPublisher,
     TagPublisher,
     TagPublishRequest,
     TagPublishResult,
 )
-from bumpkin.github.types import AppEvent
+from bumpkin.integrations.github.types import AppEvent
 from bumpkin.io.github_http import (
     format_github_http_error,
     github_request_bytes,

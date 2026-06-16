@@ -6,9 +6,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from bumpkin.github.recommendations import MergeRecommendation, MergeRecommendationRequest
-from bumpkin.github.releases import ReleasePublishRequest, ReleasePublishResult
-from bumpkin.github.tags import TagPublishRequest, TagPublishResult
+from bumpkin.integrations.github.recommendations import (
+    MergeRecommendation,
+    MergeRecommendationRequest,
+)
+from bumpkin.integrations.github.releases import ReleasePublishRequest, ReleasePublishResult
+from bumpkin.integrations.github.tags import TagPublishRequest, TagPublishResult
 from bumpkin.release_job import (
     ReleaseScopedPullRequest,
     _deserialize_release_candidate,
