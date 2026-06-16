@@ -2909,8 +2909,7 @@ diff --git a/pyproject.toml b/pyproject.toml
 
     findings = detect_python_api_findings(diff_text)
 
-    assert any(finding.rule == "python_requires_floor_raised" for finding in findings)
-    assert any("3.10" in finding.title for finding in findings)
+    assert findings == []
 
 
 def test_detect_findings_ignores_js_ts_internal_only_changes() -> None:

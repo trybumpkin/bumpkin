@@ -2595,8 +2595,9 @@ def detect_python_api_findings(
         added_floor = _extract_requires_python_floor(file_diff.path, added_version_lines)
         if (
             _is_supported_python_packaging_metadata_path(file_diff.path)
+            and removed_floor is not None
             and added_floor is not None
-            and (removed_floor is None or added_floor > removed_floor)
+            and added_floor > removed_floor
         ):
             counter += 1
             findings.append(
@@ -2605,16 +2606,13 @@ def detect_python_api_findings(
                     rule="python_requires_floor_raised",
                     confidence="high",
                     title=(
-                        f"Declared supported Python floor: {'.'.join(map(str, added_floor))}"
-                        if removed_floor is None
-                        else (
-                            "Raised supported Python floor: "
-                            f"{'.'.join(map(str, removed_floor))} -> {'.'.join(map(str, added_floor))}"
-                        )
+                        "Raised supported Python floor: "
+                        f"{'.'.join(map(str, removed_floor))} -> "
+                        f"{'.'.join(map(str, added_floor))}"
                     ),
                     why=(
-                        "Declaring or raising the minimum supported Python version is a "
-                        "breaking compatibility change for downstream users on older runtimes."
+                        "Raising the minimum supported Python version breaks users on older "
+                        "runtimes."
                     ),
                     path=file_diff.path,
                     snippet=next(

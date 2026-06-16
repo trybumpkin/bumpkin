@@ -108,8 +108,6 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
     evidence = finding.evidence
     if not evidence:
         return "unknown"
-    if finding.rule == "python_requires_floor_raised":
-        return "public"
     first = evidence[0]
     path = str(first.get("path", "")).strip()
     if not path:
@@ -332,16 +330,13 @@ def summarize_evidence(
     unknown_impactful = 0
     for finding in findings:
         severity = finding.severity.upper()
-        if finding.rule == "python_requires_floor_raised":
-            if severity in {"MINOR", "MAJOR"}:
-                export_public += 1
-            if severity == "MAJOR":
-                export_breaking += 1
-            continue
         boundary = classify_finding_boundary(finding, public_hints=public_hints)
         if severity in {"MINOR", "MAJOR"} and boundary == "unknown":
             unknown_impactful += 1
-        if not finding.rule.startswith("export_"):
+        if finding.rule == "python_requires_floor_raised":
+            if boundary != "public":
+                continue
+        elif not finding.rule.startswith("export_"):
             continue
         if boundary == "internal":
             continue
