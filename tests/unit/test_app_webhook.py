@@ -5,17 +5,20 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 
-from bumpkin.app.reactions import GitHubIssueCommentPublisher, ReactionPublishRequest
-from bumpkin.app.recommendations import (
+from bumpkin.integrations.github.reactions import (
+    GitHubIssueCommentPublisher,
+    ReactionPublishRequest,
+)
+from bumpkin.integrations.github.recommendations import (
     GitHubRecommendationCommentPublisher,
     MergeRecommendation,
     MergeRecommendationRequest,
 )
-from bumpkin.app.releases import ReleasePublishRequest, ReleasePublishResult
-from bumpkin.app.runtime import load_app_runtime_config
-from bumpkin.app.tags import GitHubTagPublisher, TagPublishRequest, TagPublishResult
-from bumpkin.app.webhook import build_app_webhook_service
-from bumpkin.app.workflows import WorkflowDispatchRequest, WorkflowDispatchResult
+from bumpkin.integrations.github.releases import ReleasePublishRequest, ReleasePublishResult
+from bumpkin.integrations.github.runtime import load_app_runtime_config
+from bumpkin.integrations.github.tags import GitHubTagPublisher, TagPublishRequest, TagPublishResult
+from bumpkin.integrations.github.webhook import build_app_webhook_service
+from bumpkin.integrations.github.workflows import WorkflowDispatchRequest, WorkflowDispatchResult
 
 
 class _FakeReactionPublisher:

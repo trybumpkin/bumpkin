@@ -4,9 +4,12 @@ import hmac
 import json
 from hashlib import sha256
 
-from bumpkin.app.recommendations import MergeRecommendation, MergeRecommendationRequest
-from bumpkin.app.runtime import load_app_runtime_config
-from bumpkin.app.webhook import build_app_webhook_service
+from bumpkin.integrations.github.recommendations import (
+    MergeRecommendation,
+    MergeRecommendationRequest,
+)
+from bumpkin.integrations.github.runtime import load_app_runtime_config
+from bumpkin.integrations.github.webhook import build_app_webhook_service
 
 
 class _FakeRecommendationRunner:

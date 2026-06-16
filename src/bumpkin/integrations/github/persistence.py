@@ -18,9 +18,9 @@ except ImportError:  # pragma: no cover - exercised in deployment, optional in l
 if TYPE_CHECKING:
     from psycopg import Connection as PsycopgConnection
 
-from bumpkin.app.guards import ApprovalRecord, PublishGuardDecision
-from bumpkin.app.ingress import AppEventEnvelope
-from bumpkin.app.types import AppEvent
+from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
+from bumpkin.integrations.github.ingress import AppEventEnvelope
+from bumpkin.integrations.github.types import AppEvent
 
 DEFAULT_EVENT_STATUS = "accepted"
 _PROPOSED_BUMP_RE = re.compile(r"(?im)^proposed bump \(court\):\s*(?P<label>[A-Z_]+)")

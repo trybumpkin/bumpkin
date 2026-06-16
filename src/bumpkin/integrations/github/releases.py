@@ -4,7 +4,7 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from bumpkin.app.github_http import format_github_http_error, github_request_json
+from bumpkin.integrations.github.github_http import format_github_http_error, github_request_json
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,11 +39,14 @@ EXPECTED_LEGACY_TO_PACKAGE_IMPORTS = {
     ("src/version.py", "bumpkin.versioning.tags"),
 }
 
-APP_ALLOWED_BUMPKIN_IMPORT_PREFIXES = ("bumpkin.app", "bumpkin.licensing")
+GITHUB_INTEGRATION_ALLOWED_BUMPKIN_IMPORT_PREFIXES = (
+    "bumpkin.integrations.github",
+    "bumpkin.licensing",
+)
 LICENSING_ALLOWED_BUMPKIN_IMPORT_PREFIXES = ("bumpkin.licensing",)
-APP_MODULE_ALLOWED_IMPORT_PREFIXES = {
+GITHUB_INTEGRATION_MODULE_ALLOWED_IMPORT_PREFIXES = {
     "recommendations.py": (
-        *APP_ALLOWED_BUMPKIN_IMPORT_PREFIXES,
+        *GITHUB_INTEGRATION_ALLOWED_BUMPKIN_IMPORT_PREFIXES,
         "bumpkin.io",
         "bumpkin.orchestrator",
     ),
@@ -151,11 +154,11 @@ def test_control_and_licensing_import_boundaries() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     violations: list[str] = []
 
-    app_root = repo_root / "src" / "bumpkin" / "app"
-    for path in sorted(app_root.glob("*.py")):
-        allowed_prefixes = APP_MODULE_ALLOWED_IMPORT_PREFIXES.get(
+    github_integration_root = repo_root / "src" / "bumpkin" / "integrations" / "github"
+    for path in sorted(github_integration_root.glob("*.py")):
+        allowed_prefixes = GITHUB_INTEGRATION_MODULE_ALLOWED_IMPORT_PREFIXES.get(
             path.name,
-            APP_ALLOWED_BUMPKIN_IMPORT_PREFIXES,
+            GITHUB_INTEGRATION_ALLOWED_BUMPKIN_IMPORT_PREFIXES,
         )
         imports = _collect_bumpkin_imports(path)
         for module_name in sorted(imports):

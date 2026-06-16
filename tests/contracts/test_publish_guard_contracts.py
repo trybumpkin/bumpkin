@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from bumpkin.app.contracts import (
+from bumpkin.integrations.github.contracts import (
     publish_guard_decision_to_payload,
     validate_publish_decision_payload,
 )
-from bumpkin.app.guards import PublishGuardDecision
+from bumpkin.integrations.github.guards import PublishGuardDecision
 
 
 def test_publish_decision_contract_requires_guard_reasons() -> None:

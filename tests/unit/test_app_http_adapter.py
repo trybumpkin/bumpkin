@@ -7,11 +7,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from bumpkin.app.http_adapter import (
+from bumpkin.integrations.github.http_adapter import (
     build_asgi_github_webhook_app,
     build_wsgi_github_webhook_app,
 )
-from bumpkin.app.webhook import WebhookResponse
+from bumpkin.integrations.github.webhook import WebhookResponse
 
 
 @dataclass

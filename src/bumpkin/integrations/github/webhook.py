@@ -6,9 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, Self
 
-from bumpkin.app.events import is_recommendation_merge_event, normalize_webhook_event
-from bumpkin.app.github_auth import GitHubAppInstallationTokenProvider
-from bumpkin.app.ingress import (
+from bumpkin.integrations.github.events import (
+    is_recommendation_merge_event,
+    normalize_webhook_event,
+)
+from bumpkin.integrations.github.github_auth import GitHubAppInstallationTokenProvider
+from bumpkin.integrations.github.ingress import (
     OUTCOME_ACCEPTED,
     OUTCOME_DUPLICATE_IGNORED,
     OUTCOME_REJECTED_SIGNATURE,
@@ -18,15 +21,19 @@ from bumpkin.app.ingress import (
     InMemoryDeliveryStore,
     ingest_webhook_event,
 )
-from bumpkin.app.persistence import AppStateStore, EphemeralAppStateStore, build_app_state_store
-from bumpkin.app.reactions import (
+from bumpkin.integrations.github.persistence import (
+    AppStateStore,
+    EphemeralAppStateStore,
+    build_app_state_store,
+)
+from bumpkin.integrations.github.reactions import (
     GitHubIssueCommentPublisher,
     GitHubIssueCommentReactionPublisher,
     NoopReactionPublisher,
     ReactionPublisher,
     ReactionPublishRequest,
 )
-from bumpkin.app.recommendations import (
+from bumpkin.integrations.github.recommendations import (
     GitHubRecommendationCommentPublisher,
     MergeRecommendationRequest,
     NoopRecommendationPublisher,
@@ -34,28 +41,28 @@ from bumpkin.app.recommendations import (
     RecommendationPublisher,
     RecommendationRunner,
 )
-from bumpkin.app.release_aggregation import aggregate_release_backlog
-from bumpkin.app.release_notes import render_release_notes
-from bumpkin.app.releases import (
+from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
+from bumpkin.integrations.github.release_notes import render_release_notes
+from bumpkin.integrations.github.releases import (
     GitHubReleasePublisher,
     NoopReleasePublisher,
     ReleasePublisher,
     ReleasePublishRequest,
 )
-from bumpkin.app.runtime import (
+from bumpkin.integrations.github.runtime import (
     APP_MODE_SHELL,
     BUMP_MISMATCH_POLICY_BLOCK,
     AppRuntimeConfig,
     load_app_runtime_config,
 )
-from bumpkin.app.tags import (
+from bumpkin.integrations.github.tags import (
     GitHubTagPublisher,
     NoopTagPublisher,
     TagPublisher,
     TagPublishRequest,
 )
-from bumpkin.app.types import AppEvent, SlashCommand
-from bumpkin.app.workflows import (
+from bumpkin.integrations.github.types import AppEvent, SlashCommand
+from bumpkin.integrations.github.workflows import (
     GitHubWorkflowDispatcher,
     NoopWorkflowDispatcher,
     WorkflowDispatcher,

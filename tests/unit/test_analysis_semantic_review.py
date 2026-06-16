@@ -29,7 +29,7 @@ def test_evaluate_proof_obligations_accepts_internal_patch_side_effect_transitio
         evaluated_label="PATCH",
         semantic_facts=[
             {
-                "path": "src/bumpkin/app/recommendations.py",
+                "path": "src/bumpkin/integrations/github/recommendations.py",
                 "rule": "added_external_side_effect",
                 "action": "added",
                 "target": "response",

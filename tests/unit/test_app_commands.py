@@ -1,4 +1,4 @@
-from bumpkin.app.commands import parse_slash_command
+from bumpkin.integrations.github.commands import parse_slash_command
 
 
 def test_parse_slash_command_approve() -> None:

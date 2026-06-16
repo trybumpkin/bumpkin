@@ -8,9 +8,9 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Protocol, cast
 
-from bumpkin.app.commands import parse_slash_command
-from bumpkin.app.events import normalize_webhook_event
-from bumpkin.app.types import AppEvent, SlashCommand
+from bumpkin.integrations.github.commands import parse_slash_command
+from bumpkin.integrations.github.events import normalize_webhook_event
+from bumpkin.integrations.github.types import AppEvent, SlashCommand
 
 OUTCOME_ACCEPTED = "accepted"
 OUTCOME_DUPLICATE_IGNORED = "duplicate_ignored"

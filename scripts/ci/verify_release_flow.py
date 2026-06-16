@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC_PATH = _REPO_ROOT / "src"
 if str(_SRC_PATH) not in sys.path:
     sys.path.insert(0, str(_SRC_PATH))
 
-from bumpkin.release_job import _deserialize_release_candidate
+from bumpkin.release_job import _deserialize_release_candidate  # noqa: E402
 
 MAINTAINER_ONLY_SECTIONS = (
     "## Release rationale",

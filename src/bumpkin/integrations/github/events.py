@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from bumpkin.app.types import AppEvent
+from bumpkin.integrations.github.types import AppEvent
 
 SUPPORTED_WEBHOOK_EVENTS = frozenset(
     {"issue_comment", "pull_request", "pull_request_review", "push", "workflow_run"}

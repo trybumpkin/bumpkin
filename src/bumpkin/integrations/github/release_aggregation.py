@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bumpkin.app.persistence import ReleaseBacklogItem
+from bumpkin.integrations.github.persistence import ReleaseBacklogItem
 
 _LABEL_PRECEDENCE = {
     "NO_BUMP": 0,
