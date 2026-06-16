@@ -3,13 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Lock
 from typing import Any
+
+from bumpkin.app.github_http import github_request_json
 
 _GITHUB_API_VERSION = "2022-11-28"
 
@@ -164,19 +165,13 @@ class GitHubAppInstallationTokenProvider:
         bearer_token: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
+        response, _headers = github_request_json(
+            url=url,
             method=method,
-            headers={
-                "Authorization": f"Bearer {bearer_token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-                "X-GitHub-Api-Version": _GITHUB_API_VERSION,
-            },
+            timeout_seconds=self._timeout_seconds,
+            bearer_token=bearer_token,
+            user_agent=self._user_agent,
+            payload=payload,
+            extra_headers={"X-GitHub-Api-Version": _GITHUB_API_VERSION},
         )
-        with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-            body = response.read().decode("utf-8")
-        return json.loads(body) if body else {}
+        return response

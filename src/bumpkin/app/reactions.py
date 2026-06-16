@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
+
+from bumpkin.app.github_http import github_request_bytes, github_request_json
 
 REACTION_COMMENT_MARKER = "<!-- bumpkin:app-reaction -->"
 
@@ -164,21 +164,15 @@ class GitHubIssueCommentPublisher:
         method: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
+        response, _headers = github_request_json(
+            url=url,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-            },
+            timeout_seconds=self._timeout_seconds,
+            token=self._token,
+            user_agent=self._user_agent,
+            payload=payload,
         )
-        with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-            content = response.read().decode("utf-8")
-        return json.loads(content) if content else {}
+        return response
 
 
 class GitHubIssueCommentReactionPublisher:
@@ -206,17 +200,12 @@ class GitHubIssueCommentReactionPublisher:
             f"{request.comment_id}/reactions"
         )
         payload = {"content": emoji}
-        api_request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
+        github_request_bytes(
+            url=url,
             method="POST",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": self._user_agent,
-            },
+            timeout_seconds=self._timeout_seconds,
+            token=self._token,
+            user_agent=self._user_agent,
+            payload=payload,
         )
-        with urllib.request.urlopen(api_request, timeout=self._timeout_seconds):
-            pass
         return request.comment_html_url
