@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from bumpkin.io.github_http import github_request_bytes, github_request_json
+from bumpkin.integrations.github.http_client import DEFAULT_GITHUB_HTTP_CLIENT, GitHubHttpClient
 
 REACTION_COMMENT_MARKER = "<!-- bumpkin:app-reaction -->"
 
@@ -137,10 +137,12 @@ class GitHubIssueCommentPublisher:
         token: str,
         user_agent: str = "bumpkin-app",
         timeout_seconds: int = 10,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         self._token = token.strip()
         self._user_agent = user_agent.strip() or "bumpkin-app"
         self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
 
     def publish(self, request: ReactionPublishRequest) -> str | None:
         if not self._token:
@@ -164,7 +166,7 @@ class GitHubIssueCommentPublisher:
         method: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        response, _headers = github_request_json(
+        response, _headers = self._http_client.request_json(
             url=url,
             method=method,
             timeout_seconds=self._timeout_seconds,
@@ -182,10 +184,12 @@ class GitHubIssueCommentReactionPublisher:
         token: str,
         user_agent: str = "bumpkin-app",
         timeout_seconds: int = 10,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         self._token = token.strip()
         self._user_agent = user_agent.strip() or "bumpkin-app"
         self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
 
     def publish(self, request: ReactionPublishRequest) -> str | None:
         if not self._token:
@@ -200,7 +204,7 @@ class GitHubIssueCommentReactionPublisher:
             f"{request.comment_id}/reactions"
         )
         payload = {"content": emoji}
-        github_request_bytes(
+        self._http_client.request_bytes(
             url=url,
             method="POST",
             timeout_seconds=self._timeout_seconds,

@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Protocol
 from urllib.parse import quote
 
-from bumpkin.io.github_http import github_request_bytes
+from bumpkin.integrations.github.http_client import DEFAULT_GITHUB_HTTP_CLIENT, GitHubHttpClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +54,12 @@ class GitHubWorkflowDispatcher:
         token: str,
         user_agent: str = "bumpkin-app",
         timeout_seconds: int = 10,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         self._token = token.strip()
         self._user_agent = user_agent.strip() or "bumpkin-app"
         self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
 
     def dispatch(self, request: WorkflowDispatchRequest) -> WorkflowDispatchResult:
         if not self._token:
@@ -81,7 +83,7 @@ class GitHubWorkflowDispatcher:
         if request.base_tag is not None and request.base_tag.strip():
             inputs["base_tag"] = request.base_tag.strip()
         payload = {"ref": ref, "inputs": inputs}
-        github_request_bytes(
+        self._http_client.request_bytes(
             url=url,
             method="POST",
             timeout_seconds=self._timeout_seconds,

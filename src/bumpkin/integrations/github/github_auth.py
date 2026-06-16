@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 from threading import Lock
 from typing import Any
 
-from bumpkin.io.github_http import github_request_json
+from bumpkin.integrations.github.http_client import DEFAULT_GITHUB_HTTP_CLIENT, GitHubHttpClient
 
 _GITHUB_API_VERSION = "2022-11-28"
 
@@ -71,6 +71,7 @@ class GitHubAppInstallationTokenProvider:
         timeout_seconds: int = 10,
         refresh_margin_seconds: int = 60,
         jwt_ttl_seconds: int = 540,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         normalized_app_id = app_id.strip()
         normalized_private_key = private_key_pem.strip()
@@ -89,6 +90,7 @@ class GitHubAppInstallationTokenProvider:
         self._timeout_seconds = timeout_seconds
         self._refresh_margin = timedelta(seconds=refresh_margin_seconds)
         self._jwt_ttl_seconds = min(jwt_ttl_seconds, 540)
+        self._http_client = http_client
         self._cache: dict[int, _CachedInstallationToken] = {}
         self._lock = Lock()
 
@@ -165,7 +167,7 @@ class GitHubAppInstallationTokenProvider:
         bearer_token: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        response, _headers = github_request_json(
+        response, _headers = self._http_client.request_json(
             url=url,
             method=method,
             timeout_seconds=self._timeout_seconds,
