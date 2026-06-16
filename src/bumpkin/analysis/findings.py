@@ -1630,6 +1630,22 @@ def _collect_python_decorator_names(
     return decorators
 
 
+def _python_method_kind_from_decorators(decorators: set[str]) -> str:
+    if "staticmethod" in decorators:
+        return "staticmethod"
+    if "classmethod" in decorators:
+        return "classmethod"
+    if "setter" in decorators:
+        return "property-setter"
+    if "deleter" in decorators:
+        return "property-deleter"
+    if "getter" in decorators:
+        return "property-getter"
+    if any(decorator == "property" or decorator.endswith("property") for decorator in decorators):
+        return "property"
+    return "instance"
+
+
 def _extract_python_signatures(
     file_diff: _FileDiff,
     *,
@@ -1710,12 +1726,7 @@ def _extract_python_signatures(
                 if not inferred_class:
                     continue
                 symbol_name = f"{inferred_class}.{name}"
-            if "staticmethod" in decorators:
-                method_kind = "staticmethod"
-            elif "classmethod" in decorators:
-                method_kind = "classmethod"
-            else:
-                method_kind = "instance"
+            method_kind = _python_method_kind_from_decorators(decorators)
         else:
             if indent > 0:
                 continue
@@ -3316,7 +3327,8 @@ def detect_python_api_findings(
                         title=f"Public Python method binding changed: {symbol}",
                         why=(
                             "Changing whether a public method is bound as an instance, class, "
-                            "or static method changes how downstream callers must invoke it."
+                            "static, or property-style accessor changes how downstream callers "
+                            "must access it."
                         ),
                         path=file_diff.path,
                         snippet=new_sigs[0].source,

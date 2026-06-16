@@ -794,6 +794,44 @@ diff --git a/pkg/api.py b/pkg/api.py
     )
 
 
+def test_detect_python_findings_detects_property_to_method_binding_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,3 @@
+ class Client:
+-    @property
+     def status(self) -> str:
+         return "ok"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_method_binding_changed" and "Client.status" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_property_setter_to_method_binding_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,4 +1,3 @@
+ class Client:
+-    @status.setter
+     def status(self, value: str) -> None:
+         self._status = value
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(
+        finding.rule == "export_method_binding_changed" and "Client.status" in finding.title
+        for finding in findings
+    )
+
+
 def test_detect_python_findings_detects_nested_public_class_method_tightening() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py
