@@ -1647,6 +1647,14 @@ def _python_method_kind_from_decorators(decorators: set[str]) -> str:
     return "instance"
 
 
+def _is_public_python_member_name(name: str) -> bool:
+    if name == "__init__":
+        return True
+    if name.startswith("__") and name.endswith("__"):
+        return True
+    return not name.startswith("_")
+
+
 def _extract_python_signatures(
     file_diff: _FileDiff,
     *,
@@ -1704,6 +1712,8 @@ def _extract_python_signatures(
         if def_match:
             scope_stack.append(("def", indent, None))
         if _python_indent_level(line) > 0:
+            if not _is_public_python_member_name(name):
+                continue
             if name == "__init__" and _python_indent_level(line) > 4:
                 continue
             if public_class_path and not has_function_scope:

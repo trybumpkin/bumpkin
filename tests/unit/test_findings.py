@@ -471,6 +471,22 @@ diff --git a/pkg/mod.py b/pkg/mod.py
     assert findings == []
 
 
+def test_detect_python_findings_ignores_private_methods_on_public_classes() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,3 +1,3 @@
+ class Public:
+-    def _helper(self, timeout: int = 1) -> int:
++    def _helper(self, timeout: int) -> int:
+         return timeout
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_ignores_setup_py_python_requires_comments() -> None:
     diff_text = """
 diff --git a/setup.py b/setup.py

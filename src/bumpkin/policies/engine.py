@@ -112,6 +112,34 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
     path = str(first.get("path", "")).strip()
     if not path:
         return "unknown"
+    if finding.rule == "python_requires_floor_raised":
+        normalized = path.strip().replace("\\", "/").strip("/").lower()
+        parts = [part for part in normalized.split("/") if part]
+        internal_dirs = {
+            "bench",
+            "benches",
+            "benchmark",
+            "benchmarks",
+            "docs",
+            "doc",
+            "example",
+            "examples",
+            "internal",
+            "internals",
+            "scripts",
+            "test",
+            "tests",
+            "testing",
+            "tool",
+            "tools",
+        }
+        if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
+            return "internal"
+        if not public_hints:
+            return "unknown"
+        if path_matches_hints(path, public_hints):
+            return "public"
+        return "public"
     if is_docs_or_config_path(path):
         return "internal"
     if not public_hints:
