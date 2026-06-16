@@ -2936,6 +2936,15 @@ def test_build_filesystem_workspace_loader_blocks_parent_escape(tmp_path: Path) 
         outside.unlink(missing_ok=True)
 
 
+def test_build_filesystem_workspace_loader_ignores_non_utf8_files(tmp_path: Path) -> None:
+    loader = build_filesystem_workspace_loader(tmp_path)
+    target = tmp_path / "pkg" / "api.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\xff\xfe\x00")
+
+    assert loader("pkg/api.py") is None
+
+
 def test_detect_python_findings_respects_incremental___all___additions() -> None:
     diff_text = """
 diff --git a/pkg/api.py b/pkg/api.py

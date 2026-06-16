@@ -132,6 +132,9 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
             "benches",
             "benchmark",
             "benchmarks",
+            "build",
+            "builds",
+            "ci",
             "docs",
             "doc",
             "example",
@@ -145,6 +148,8 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
             "tool",
             "tools",
         }
+        if is_docs_or_config_path(path) and len(parts) > 1:
+            return "internal"
         if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
             return "internal"
         return "public"

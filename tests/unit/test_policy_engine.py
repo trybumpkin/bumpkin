@@ -60,6 +60,27 @@ def test_python_requires_floor_raise_stays_internal_for_internal_tool_path() -> 
     }
 
 
+def test_python_requires_floor_raise_stays_internal_for_build_and_ci_metadata() -> None:
+    findings = [
+        _python_floor_finding("build/pyproject.toml"),
+        _python_floor_finding("ci/setup.cfg"),
+        _python_floor_finding(".github/setup.py"),
+    ]
+
+    assert [
+        classify_finding_boundary(finding, public_hints=["src/**"]) for finding in findings
+    ] == [
+        "internal",
+        "internal",
+        "internal",
+    ]
+    assert summarize_boundary(findings, public_hints=["src/**"]) == {
+        "public": 0,
+        "internal": 3,
+        "unknown": 0,
+    }
+
+
 def test_python_requires_floor_raise_only_counts_as_public_evidence_when_boundary_is_public() -> (
     None
 ):

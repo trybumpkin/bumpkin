@@ -391,7 +391,7 @@ def build_filesystem_workspace_loader(
             return None
         try:
             return resolved.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
 
     return _load
