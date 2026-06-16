@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from hashlib import sha256
 
-from bumpkin.app.guards import ApprovalRecord
+from bumpkin.integrations.github.guards import ApprovalRecord
 
 
 class InMemoryApprovalStore:

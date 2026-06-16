@@ -12,11 +12,11 @@ import atexit
 import importlib
 from typing import Any, cast
 
-from bumpkin.app import (
-    build_app_webhook_service_from_env,
+from bumpkin.integrations.github.http_adapter import (
     build_asgi_github_webhook_app,
     build_wsgi_github_webhook_app,
 )
+from bumpkin.integrations.github.webhook import build_app_webhook_service_from_env
 
 
 def create_fastapi_app() -> Any:

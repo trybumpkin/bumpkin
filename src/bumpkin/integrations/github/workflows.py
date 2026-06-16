@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from typing import Protocol
 from urllib.parse import quote
 
-from bumpkin.app.github_http import github_request_bytes
+from bumpkin.integrations.github.github_http import github_request_bytes
 
 
 @dataclass(frozen=True, slots=True)

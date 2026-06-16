@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bumpkin.app.types import SlashCommand
+from bumpkin.integrations.github.types import SlashCommand
 
 SUPPORTED_SLASH_COMMANDS = frozenset({"approve", "bump", "publish", "explain"})
 _BUMP_SHORTHAND = frozenset({"major", "minor", "patch", "no_bump", "no-bump", "nobump"})

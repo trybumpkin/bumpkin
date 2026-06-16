@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from bumpkin.app.github_http import github_request_bytes, github_request_json
+from bumpkin.integrations.github.github_http import github_request_bytes, github_request_json
 
 REACTION_COMMENT_MARKER = "<!-- bumpkin:app-reaction -->"
 

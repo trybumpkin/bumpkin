@@ -5,8 +5,11 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol, Self, cast
 from wsgiref.simple_server import make_server
 
-from bumpkin.app.http_adapter import StartResponse, build_wsgi_github_webhook_app
-from bumpkin.app.webhook import AppWebhookService, build_app_webhook_service_from_env
+from bumpkin.integrations.github.http_adapter import StartResponse, build_wsgi_github_webhook_app
+from bumpkin.integrations.github.webhook import (
+    AppWebhookService,
+    build_app_webhook_service_from_env,
+)
 
 
 class WebhookServiceLike(Protocol):

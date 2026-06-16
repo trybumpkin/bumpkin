@@ -15,11 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, cast
 
-from bumpkin.app.github_http import (
-    format_github_http_error,
-    github_request_bytes,
-    github_request_json,
-)
 from bumpkin.github.recommendations import (
     MergeRecommendation,
     MergeRecommendationRequest,
@@ -39,6 +34,11 @@ from bumpkin.github.tags import (
     TagPublishResult,
 )
 from bumpkin.github.types import AppEvent
+from bumpkin.integrations.github.github_http import (
+    format_github_http_error,
+    github_request_bytes,
+    github_request_json,
+)
 from bumpkin.versioning.tags import detect_next_version, list_tags, resolve_current_tag
 
 _LABEL_PRECEDENCE = {"NO_BUMP": 0, "PATCH": 1, "MINOR": 2, "MAJOR": 3}

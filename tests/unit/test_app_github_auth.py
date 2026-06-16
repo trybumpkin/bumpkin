@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from bumpkin.app.github_auth import GitHubAppInstallationTokenProvider
+from bumpkin.integrations.github.github_auth import GitHubAppInstallationTokenProvider
 
 
 class _FakeInstallationTokenProvider(GitHubAppInstallationTokenProvider):

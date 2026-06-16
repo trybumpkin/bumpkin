@@ -1,4 +1,4 @@
-from bumpkin.app.recommendations import (
+from bumpkin.integrations.github.recommendations import (
     GitHubRecommendationCommentPublisher,
     MergeRecommendation,
     MergeRecommendationRequest,

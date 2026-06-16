@@ -1,4 +1,7 @@
-from bumpkin.app.events import is_recommendation_merge_event, normalize_webhook_event
+from bumpkin.integrations.github.events import (
+    is_recommendation_merge_event,
+    normalize_webhook_event,
+)
 
 
 def test_normalize_issue_comment_event_uses_issue_number() -> None:

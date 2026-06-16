@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bumpkin.app.approval_store import InMemoryApprovalStore
-from bumpkin.app.guards import ApprovalRecord, evaluate_publish_for_pr
-from bumpkin.app.persistence import SqliteApprovalStore, SqliteAppStateStore
+from bumpkin.integrations.github.approval_store import InMemoryApprovalStore
+from bumpkin.integrations.github.guards import ApprovalRecord, evaluate_publish_for_pr
+from bumpkin.integrations.github.persistence import SqliteApprovalStore, SqliteAppStateStore
 
 
 def test_post_merge_publish_gate_allows_when_approval_matches() -> None:

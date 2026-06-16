@@ -6,9 +6,9 @@ New code should prefer package imports under ``bumpkin.*``.
 
 from . import (
     analysis,
-    app,
     contracts,
     eval,
+    integrations,
     io,
     licensing,
     orchestrator,
@@ -21,9 +21,9 @@ from . import (
 
 __all__ = [
     "analysis",
-    "app",
     "contracts",
     "eval",
+    "integrations",
     "io",
     "licensing",
     "orchestrator",

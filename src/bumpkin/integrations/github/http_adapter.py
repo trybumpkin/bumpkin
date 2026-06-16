@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from typing import Any, Protocol, cast
 
-from bumpkin.app.webhook import WebhookResponse
+from bumpkin.integrations.github.webhook import WebhookResponse
 
 JsonDict = dict[str, Any]
 StartResponse = Callable[[str, list[tuple[str, str]]], None]

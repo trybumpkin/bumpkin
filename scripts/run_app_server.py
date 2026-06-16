@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
-from bumpkin.app.server import run_self_host_server
+from bumpkin.integrations.github.server import run_self_host_server
 
 
 def _parse_port() -> int:
