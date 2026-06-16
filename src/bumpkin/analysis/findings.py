@@ -2007,7 +2007,7 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
         if stripped.startswith("[") and stripped.endswith("]"):
             current_section = stripped.lower()
         match = REQUIRES_PYTHON_PATTERN.search(line)
-        if match:
+        if match and current_section in {None, "[project]"}:
             floor = _extract_python_floor_from_constraint(match.group(1))
             if floor is not None:
                 return floor

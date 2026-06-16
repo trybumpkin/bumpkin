@@ -291,6 +291,38 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_ignores_custom_pyproject_requires_python_metadata() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,3 +1,3 @@
+ [tool.custom]
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_support_floor_raise_in_project_pyproject() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,3 +1,3 @@
+ [project]
+-requires-python = ">=3.9"
++requires-python = ">=3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
 def test_detect_python_findings_support_floor_raise_with_compatible_release_constraint() -> None:
     diff_text = """
 diff --git a/pyproject.toml b/pyproject.toml

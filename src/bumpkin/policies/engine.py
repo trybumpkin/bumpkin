@@ -116,6 +116,14 @@ def path_matches_hints(path: str, hints: list[str]) -> bool:
     return False
 
 
+def _is_internal_path_part(part: str, internal_dirs: set[str]) -> bool:
+    normalized = part.strip().lower()
+    if normalized in internal_dirs or normalized.startswith("_"):
+        return True
+    tokens = [token for token in re.split(r"[-_.]+", normalized) if token]
+    return any(token in internal_dirs for token in tokens)
+
+
 def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> str:
     evidence = finding.evidence
     if not evidence:
@@ -150,7 +158,7 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
         }
         if is_docs_or_config_path(path) and len(parts) > 1:
             return "internal"
-        if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
+        if any(_is_internal_path_part(part, internal_dirs) for part in parts[:-1]):
             return "internal"
         return "public"
     if is_docs_or_config_path(path):
