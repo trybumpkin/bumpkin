@@ -41,6 +41,7 @@ EXPECTED_LEGACY_TO_PACKAGE_IMPORTS = {
 
 GITHUB_INTEGRATION_ALLOWED_BUMPKIN_IMPORT_PREFIXES = (
     "bumpkin.integrations.github",
+    "bumpkin.io.github_http",
     "bumpkin.licensing",
 )
 LICENSING_ALLOWED_BUMPKIN_IMPORT_PREFIXES = ("bumpkin.licensing",)

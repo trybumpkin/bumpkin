@@ -19,6 +19,7 @@ venv/
 
 # Local eval outputs
 artifacts/
+.brooks-lint-history.json
 
 # Docs
 docs/*

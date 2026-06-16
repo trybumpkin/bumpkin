@@ -10,7 +10,7 @@ from tempfile import NamedTemporaryFile
 from threading import Lock
 from typing import Any
 
-from bumpkin.integrations.github.github_http import github_request_json
+from bumpkin.io.github_http import github_request_json
 
 _GITHUB_API_VERSION = "2022-11-28"
 

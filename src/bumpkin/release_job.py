@@ -34,7 +34,7 @@ from bumpkin.github.tags import (
     TagPublishResult,
 )
 from bumpkin.github.types import AppEvent
-from bumpkin.integrations.github.github_http import (
+from bumpkin.io.github_http import (
     format_github_http_error,
     github_request_bytes,
     github_request_json,
