@@ -1,4 +1,4 @@
-from bumpkin.app.github_http import (
+from bumpkin.io.github_http import (
     DEFAULT_GITHUB_ACCEPT,
     build_github_headers,
     collect_paginated_github_json_list,

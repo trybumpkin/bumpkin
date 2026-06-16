@@ -13,8 +13,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 
-from bumpkin.app.github_http import collect_paginated_github_json_list, github_request_json
 from bumpkin.app.types import AppEvent
+from bumpkin.io.github_http import collect_paginated_github_json_list, github_request_json
 from bumpkin.io.tokens import is_valid_models_endpoint
 from bumpkin.orchestrator import pipeline as orchestrator_pipeline
 

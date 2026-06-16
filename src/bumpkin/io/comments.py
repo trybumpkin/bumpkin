@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, cast
 
-from bumpkin.app.github_http import github_request_json
+from bumpkin.io.github_http import github_request_json
 
 COMMENT_MARKER = "<!-- bumpkin:recommendation -->"
 BUMPKIN_TITLES = (

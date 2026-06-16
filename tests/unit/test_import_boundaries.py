@@ -39,7 +39,11 @@ EXPECTED_LEGACY_TO_PACKAGE_IMPORTS = {
     ("src/version.py", "bumpkin.versioning.tags"),
 }
 
-APP_ALLOWED_BUMPKIN_IMPORT_PREFIXES = ("bumpkin.app", "bumpkin.licensing")
+APP_ALLOWED_BUMPKIN_IMPORT_PREFIXES = (
+    "bumpkin.app",
+    "bumpkin.io.github_http",
+    "bumpkin.licensing",
+)
 LICENSING_ALLOWED_BUMPKIN_IMPORT_PREFIXES = ("bumpkin.licensing",)
 APP_MODULE_ALLOWED_IMPORT_PREFIXES = {
     "recommendations.py": (
