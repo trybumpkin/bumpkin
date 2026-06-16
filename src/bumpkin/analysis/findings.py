@@ -1390,9 +1390,13 @@ def _extract_python_implicit_public_names(
 
         if allow_reexport_imports and PYTHON_IMPORT_START_PATTERN.search(line):
             statement_source, index = _collect_python_import_statement(lines, index)
-            explicit_alias_names = _extract_python_explicit_import_alias_names(
-                statement_source,
-                path=path,
+            explicit_alias_names = (
+                _extract_python_explicit_import_alias_names(
+                    statement_source,
+                    path=path,
+                )
+                if import_only_api_facade or explicit_public_names is not None
+                else set[str]()
             )
             exports.update(
                 name
@@ -1530,6 +1534,9 @@ def _extract_python_public_import_bindings(
         if not (allow_api_import_bindings and PYTHON_IMPORT_START_PATTERN.search(line)):
             index += 1
             continue
+        if not import_only_api_facade and explicit_public_names is None:
+            index += 1
+            continue
 
         statement_source, index = _collect_python_import_statement(lines, index)
         try:
@@ -1543,9 +1550,13 @@ def _extract_python_public_import_bindings(
         if not _is_python_public_reexport_statement(statement, path=path):
             continue
 
-        explicit_alias_names = _extract_python_explicit_import_alias_names(
-            statement_source,
-            path=path,
+        explicit_alias_names = (
+            _extract_python_explicit_import_alias_names(
+                statement_source,
+                path=path,
+            )
+            if import_only_api_facade or explicit_public_names is not None
+            else set[str]()
         )
         if isinstance(statement, ast.ImportFrom):
             module_ref = "." * statement.level + (statement.module or "")
@@ -1825,7 +1836,10 @@ def _extract_python_classes(
 
 
 def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | None:
-    match = re.search(r"(?P<op>>=|>|~=)\s*(?P<version>\d+(?:\.\d+)*)", constraint)
+    match = re.search(
+        r"(?P<op>>=|>|~=|\^|==)\s*(?P<version>\d+(?:\.\d+)*)(?:\.\*)?",
+        constraint,
+    )
     if not match:
         return None
     parts = [int(part) for part in match.group("version").split(".")]

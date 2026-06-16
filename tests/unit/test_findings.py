@@ -324,6 +324,39 @@ diff --git a/setup.cfg b/setup.cfg
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_support_floor_raise_with_poetry_caret_constraint() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,3 +1,3 @@
+ [tool.poetry.dependencies]
+-python = "^3.9"
++python = "^3.10"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_with_wildcard_equality_constraint() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = "==3.9.*"
++requires-python = "==3.10.*"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
 def test_detect_python_findings_support_floor_raise_in_root_setup_py() -> None:
     diff_text = """
 diff --git a/setup.py b/setup.py
@@ -2272,7 +2305,7 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     assert any("helper" in finding.title for finding in findings)
 
 
-def test_detect_python_findings_requests_manual_review_for_mixed_api_import_binding_change(
+def test_detect_python_findings_detects_mixed_api_import_binding_change_with_root_reexport(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2280,6 +2313,10 @@ def test_detect_python_findings_requests_manual_review_for_mixed_api_import_bind
     workspace_loader = _workspace_loader(tmp_path)
     package_dir = tmp_path / "pkg"
     package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from .api import Client\n",
+        encoding="utf-8",
+    )
     target = package_dir / "api.py"
     target.write_text(
         "from .client import ServiceClient as Client\n\nX = 1\n",
@@ -2299,9 +2336,39 @@ diff --git a/{target.as_posix()} b/{target.as_posix()}
     findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
 
     assert any(
-        finding.rule == "python_api_module_import_binding_changed" and "Client" in finding.title
+        finding.rule == "export_reexport_target_changed" and "Client" in finding.title
         for finding in findings
     )
+
+
+def test_detect_python_findings_ignores_internal_dependency_swap_in_mixed_api_module(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "pkg"
+    package_dir.mkdir(parents=True)
+    target = package_dir / "api.py"
+    target.write_text(
+        'import orjson as json\n\n\ndef public_api() -> str:\n    return "ok"\n',
+        encoding="utf-8",
+    )
+    diff_text = f"""
+diff --git a/{target.as_posix()} b/{target.as_posix()}
+--- a/{target.as_posix()}
++++ b/{target.as_posix()}
+@@ -1,4 +1,4 @@
+-import json
++import orjson as json
+
+ def public_api() -> str:
+     return "ok"
+"""
+
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert findings == []
 
 
 def test_detect_python_findings_requests_manual_review_for_mixed_api_import_surface_rename(
