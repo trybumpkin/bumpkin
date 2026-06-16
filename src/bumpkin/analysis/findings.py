@@ -295,14 +295,7 @@ def _python_packaging_metadata_kind(path: str) -> str | None:
 
 
 def _is_supported_python_packaging_metadata_path(path: str) -> bool:
-    metadata_kind = _python_packaging_metadata_kind(path)
-    if metadata_kind is None:
-        return False
-    normalized = path.strip().replace("\\", "/").strip("/").lower()
-    parts = [part for part in normalized.split("/") if part]
-    if len(parts) == 1:
-        return True
-    return any(part in PYTHON_SOURCE_ROOT_NAMES for part in parts[:-1])
+    return _python_packaging_metadata_kind(path) is not None
 
 
 def _is_python_reexport_surface(path: str) -> bool:

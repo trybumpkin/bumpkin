@@ -24,11 +24,11 @@ def test_detect_language_groups_treats_pyw_files_as_python() -> None:
     assert groups == ["python"]
 
 
-def test_detect_language_groups_treats_python_packaging_metadata_as_python() -> None:
-    groups = detect_language_groups(["pyproject.toml", "setup.cfg", "setup.py"])
-    assert groups == ["python"]
+def test_detect_language_groups_does_not_treat_packaging_metadata_alone_as_python() -> None:
+    groups = detect_language_groups(["pyproject.toml", "setup.cfg"])
+    assert groups == []
 
 
-def test_detect_language_groups_treats_python_source_root_metadata_as_python() -> None:
-    groups = detect_language_groups(["python/acme/pyproject.toml", "lib/demo/setup.cfg"])
+def test_detect_language_groups_keeps_python_when_metadata_changes_with_python_files() -> None:
+    groups = detect_language_groups(["pyproject.toml", "pkg/service.py", "setup.cfg"])
     assert groups == ["python"]

@@ -190,7 +190,7 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert findings[0].severity == "MAJOR"
 
 
-def test_detect_python_findings_ignores_non_source_root_nested_pyproject_floor_raise() -> None:
+def test_detect_python_findings_support_floor_raise_in_nested_pyproject() -> None:
     diff_text = """
 diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pyproject.toml
 --- a/packages/internal-tool/pyproject.toml
@@ -201,7 +201,9 @@ diff --git a/packages/internal-tool/pyproject.toml b/packages/internal-tool/pypr
 """
     findings = detect_python_api_findings(diff_text)
 
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
 
 
 def test_detect_python_findings_support_floor_raise_in_python_source_root_pyproject() -> None:
@@ -229,6 +231,24 @@ diff --git a/lib/demo/setup.cfg b/lib/demo/setup.cfg
  [options]
 -python_requires = >=3.9
 +python_requires = >=3.10
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_in_services_setup_py() -> None:
+    diff_text = """
+diff --git a/services/api/setup.py b/services/api/setup.py
+--- a/services/api/setup.py
++++ b/services/api/setup.py
+@@ -1,3 +1,3 @@
+ setup(
+-    python_requires=">=3.9",
++    python_requires=">=3.10",
+ )
 """
     findings = detect_python_api_findings(diff_text)
 

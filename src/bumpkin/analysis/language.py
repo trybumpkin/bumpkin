@@ -45,9 +45,6 @@ def _language_group_for_suffix(suffix: str) -> str | None:
 
 
 def _language_group_for_path(file_path: str) -> str | None:
-    normalized = str(file_path).strip().replace("\\", "/").lower()
-    if normalized.endswith(("pyproject.toml", "setup.cfg", "setup.py")):
-        return "python"
     return _language_group_for_suffix(Path(file_path).suffix.lower())
 
 
