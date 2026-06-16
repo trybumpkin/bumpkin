@@ -812,6 +812,37 @@ def _extract_python_explicit_import_alias_names(statement_source: str, *, path: 
     return exports
 
 
+def _has_python_explicit_public_import_alias(lines: list[str], *, path: str) -> bool:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _is_python_top_level_statement(line):
+            index += 1
+            continue
+        if not PYTHON_IMPORT_START_PATTERN.search(line):
+            index += 1
+            continue
+
+        statement_source, index = _collect_python_import_statement(lines, index)
+        try:
+            module = ast.parse(statement_source)
+        except SyntaxError:
+            continue
+        if len(module.body) != 1:
+            continue
+
+        statement = module.body[0]
+        if not _is_python_public_reexport_statement(statement, path=path):
+            continue
+        if isinstance(statement, ast.ImportFrom) and any(
+            alias.asname is not None and not alias.asname.startswith("_")
+            for alias in statement.names
+            if alias.name != "*"
+        ):
+            return True
+    return False
+
+
 def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> bool:
     package_root = _python_package_root(path)
     return (
@@ -3211,6 +3242,16 @@ def detect_python_api_findings(
             for name in (removed_local_public_names & added_local_public_names)
             if name.lower() not in {"helper", "helpers", "util", "utils"}
         }
+        explicit_api_import_alias_change = _is_python_api_surface(file_diff.path) and (
+            _has_python_explicit_public_import_alias(
+                removed_version_lines,
+                path=file_diff.path,
+            )
+            or _has_python_explicit_public_import_alias(
+                added_version_lines,
+                path=file_diff.path,
+            )
+        )
         unresolved_api_import_surface_symbols = sorted(
             symbol
             for symbol in (removed_import_public_names ^ added_import_public_names)
@@ -3218,7 +3259,7 @@ def detect_python_api_findings(
             and workspace_explicit_exports is None
             and not removed_has_explicit_all
             and not added_has_explicit_all
-            and not stable_local_api_surface_names
+            and (not stable_local_api_surface_names or explicit_api_import_alias_change)
             and symbol not in removed_exports
             and symbol not in added_exports
         )
