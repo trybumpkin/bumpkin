@@ -9,6 +9,18 @@ from bumpkin.versioning.tags import parse_tag
 
 from .guards import is_docs_or_config_path
 
+PYTHON_PUBLIC_EVIDENCE_RULES = {
+    "python_api_module_import_binding_changed",
+    "python_api_module_import_surface_changed",
+    "python_api_module_local_surface_changed",
+    "python_nested_constructor_changed",
+    "python_constructor_ambiguous",
+}
+PYTHON_BREAKING_EVIDENCE_RULES = {
+    "python_nested_constructor_changed",
+    "python_constructor_ambiguous",
+}
+
 
 def _to_int(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
@@ -136,7 +148,7 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
         if any(part in internal_dirs or part.startswith("_") for part in parts[:-1]):
             return "internal"
         if not public_hints:
-            return "unknown"
+            return "public" if len(parts) == 1 else "unknown"
         if path_matches_hints(path, public_hints):
             return "public"
         return "unknown"
@@ -359,18 +371,25 @@ def summarize_evidence(
     for finding in findings:
         severity = finding.severity.upper()
         boundary = classify_finding_boundary(finding, public_hints=public_hints)
-        if severity in {"MINOR", "MAJOR"} and boundary == "unknown":
+        if (
+            severity in {"MINOR", "MAJOR"}
+            or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES
+            or finding.rule == "python_requires_floor_raised"
+        ) and boundary == "unknown":
             unknown_impactful += 1
-        if finding.rule == "python_requires_floor_raised":
+        if (
+            finding.rule == "python_requires_floor_raised"
+            or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES
+        ):
             if boundary != "public":
                 continue
         elif not finding.rule.startswith("export_"):
             continue
         if boundary == "internal":
             continue
-        if severity in {"MINOR", "MAJOR"}:
+        if severity in {"MINOR", "MAJOR"} or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES:
             export_public += 1
-        if severity == "MAJOR":
+        if severity == "MAJOR" or finding.rule in PYTHON_BREAKING_EVIDENCE_RULES:
             export_breaking += 1
 
     contract_public = _to_int(contract_signals.get("total", 0), default=0)
