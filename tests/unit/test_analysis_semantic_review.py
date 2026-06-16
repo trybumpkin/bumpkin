@@ -72,7 +72,9 @@ def test_critical_missing_proof_obligations_filters_non_empty_values() -> None:
 
 def test_critical_missing_proof_obligations_handles_non_list() -> None:
     assert semantic_review_module.critical_missing_proof_obligations({}) == []
-    assert semantic_review_module.critical_missing_proof_obligations({"critical_missing": "x"}) == []
+    assert (
+        semantic_review_module.critical_missing_proof_obligations({"critical_missing": "x"}) == []
+    )
 
 
 def test_detect_contradictions_flags_fix_intent_vs_public_change() -> None:

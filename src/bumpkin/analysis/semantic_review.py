@@ -45,7 +45,9 @@ def evaluate_proof_obligations(
 
     fact_present = bool(semantic_facts)
     has_paths = fact_present and all(str(item.get("path", "")).strip() for item in semantic_facts)
-    has_transitions = fact_present and all(row_has_semantic_transition(item) for item in semantic_facts)
+    has_transitions = fact_present and all(
+        row_has_semantic_transition(item) for item in semantic_facts
+    )
     patch_transition = (
         any(row_satisfies_patch_transition(item) for item in semantic_facts)
         if label == "PATCH"

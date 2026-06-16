@@ -715,5 +715,3 @@ def test_polish_explanation_attempts_repair_on_non_json_output(monkeypatch) -> N
     assert error is None
     assert "core.py" in reasoning
     assert changelog.startswith("fix(")
-
-
