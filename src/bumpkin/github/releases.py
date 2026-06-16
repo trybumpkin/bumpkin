@@ -1,3 +1,5 @@
+"""Compatibility facade for legacy GitHub release imports."""
+
 from bumpkin.integrations.github.releases import (
     GitHubReleasePublisher,
     NoopReleasePublisher,

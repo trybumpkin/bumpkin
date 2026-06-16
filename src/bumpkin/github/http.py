@@ -1,3 +1,5 @@
+"""Compatibility facade for legacy GitHub HTTP imports."""
+
 from bumpkin.io.github_http import (
     DEFAULT_GITHUB_ACCEPT,
     build_github_headers,

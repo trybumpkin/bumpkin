@@ -1,3 +1,5 @@
+"""Compatibility facade for legacy GitHub tag imports."""
+
 from bumpkin.integrations.github.tags import (
     GitHubTagPublisher,
     NoopTagPublisher,

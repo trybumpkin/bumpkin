@@ -18,18 +18,18 @@ It is built for teams that want release automation without depending on perfect 
 
 ## What it does
 
-1. finds the previous tag
-2. scans merged PRs since that tag
-3. proposes the next version or `NO_BUMP`
-4. builds a maintainer briefing plus a public changelog
-5. publishes only the reviewed public release when you choose `release_publish`
+1. Finds the previous tag
+2. Scans merged PRs since that tag
+3. Proposes the next version or `NO_BUMP`
+4. Builds a maintainer briefing plus a public changelog
+5. Publishes only the reviewed public release when you choose `release_publish`
 
 ## Who it is for
 
-- teams publishing GitHub Releases from merged PRs
-- squash-merge or mixed-merge workflows
-- repos with inconsistent commit discipline
-- maintainers who want review before publish
+- Teams publishing GitHub Releases from merged PRs
+- Squash-merge or mixed-merge workflows
+- Repos with inconsistent commit discipline
+- Maintainers who want review before publish
 
 ## Setup
 
@@ -39,11 +39,11 @@ Install Bumpkin as a GitHub Action directly from this repository:
 
 Before you run it:
 
-- add these repository secrets:
+- Add these repository secrets:
   - `MODELS_TOKEN`
   - `BUMPKIN_MODEL`
   - `BUMPKIN_MODELS_ENDPOINT`
-- give the workflow:
+- Give the workflow:
   - `actions: read`
   - `contents: write`
   - `pull-requests: read`
@@ -58,11 +58,11 @@ BUMPKIN_MODELS_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/
 
 ## First run checklist
 
-- add `MODELS_TOKEN`, `BUMPKIN_MODEL`, and `BUMPKIN_MODELS_ENDPOINT`
-- keep `actions: read`, `contents: write`, and `pull-requests: read`
-- run `release_preview` first
-- review the maintainer briefing, candidate artifact, and summary
-- run `release_publish` only after the preview looks right
+- Add `MODELS_TOKEN`, `BUMPKIN_MODEL`, and `BUMPKIN_MODELS_ENDPOINT`
+- Keep `actions: read`, `contents: write`, and `pull-requests: read`
+- Run `release_preview` first
+- Review the maintainer briefing, candidate artifact, and summary
+- Run `release_publish` only after the preview looks right
 
 ## Quickstart
 
@@ -131,13 +131,13 @@ jobs:
 
 For each release run, Bumpkin returns:
 
-- the previous tag
-- the proposed next tag
-- the release type
-- the included PR count
-- a preview artifact that includes `Release rationale`, versioning context, key evidence, and the final public changelog
-- a release candidate artifact that `release_publish` can verify and reuse
-- a public release body that only contains changelog sections when a release is published
+- The previous tag
+- The proposed next tag
+- The release type
+- The included PR count
+- A preview artifact that includes `Release rationale`, versioning context, key evidence, and the final public changelog
+- A release candidate artifact that `release_publish` can verify and reuse
+- A public release body that only contains changelog sections when a release is published
 
 ## Release workflow
 
@@ -148,20 +148,20 @@ For each release run, Bumpkin returns:
 
 ## Why the split matters
 
-- maintainers review the release decision before anything ships
-- publish reuses the saved candidate instead of asking the model again
-- public releases stay changelog-focused and do not leak maintainer rationale
+- Maintainers review the release decision before anything ships
+- Publish reuses the saved candidate instead of asking the model again
+- Public releases stay changelog-focused and do not leak maintainer rationale
 
 ## Maintainer flow
 
 From the Actions tab:
 
-1. run `Bumpkin Release`
-2. choose `release_preview`
-3. inspect the maintainer preview artifact, release candidate artifact, and summary
-4. run it again with `release_publish` when the preview looks right
-5. pass `preview_run_id` when you want to publish a specific preview run
-6. use `base_tag` when you want to preview from a specific release boundary
+1. Run `Bumpkin Release`
+2. Choose `release_preview`
+3. Inspect the maintainer preview artifact, release candidate artifact, and summary
+4. Run it again with `release_publish` when the preview looks right
+5. Pass `preview_run_id` when you want to publish a specific preview run
+6. Use `base_tag` when you want to preview from a specific release boundary
 
 ## More
 

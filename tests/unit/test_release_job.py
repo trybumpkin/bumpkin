@@ -6,9 +6,12 @@ from typing import cast
 
 import pytest
 
-from bumpkin.github.recommendations import MergeRecommendation, MergeRecommendationRequest
-from bumpkin.github.releases import ReleasePublishRequest, ReleasePublishResult
-from bumpkin.github.tags import TagPublishRequest, TagPublishResult
+from bumpkin.integrations.github.recommendations import (
+    MergeRecommendation,
+    MergeRecommendationRequest,
+)
+from bumpkin.integrations.github.releases import ReleasePublishRequest, ReleasePublishResult
+from bumpkin.integrations.github.tags import TagPublishRequest, TagPublishResult
 from bumpkin.release_job import (
     ReleaseExecutionResult,
     ReleasePlan,
