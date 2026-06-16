@@ -880,11 +880,9 @@ def _verify_release_candidate(
     *,
     candidate: ReleaseCandidate,
     repository: str,
-    github_token: str,
     target_ref: str,
     base_tag: str,
-    client: GitHubRepositoryClientProtocol | None = None,
-    request_timeout: int = 15,
+    client: GitHubRepositoryClientProtocol,
 ) -> ReleasePlan:
     normalized_repository = repository.strip()
     if candidate.repository != normalized_repository:
@@ -903,14 +901,9 @@ def _verify_release_candidate(
             "Release candidate is stale because the target commit changed since preview."
         )
 
-    api_client = client or GitHubRepositoryClient(
-        repository=normalized_repository,
-        token=github_token.strip(),
-        timeout_seconds=request_timeout,
-    )
     candidate_tags = list_tags()
     if not candidate_tags:
-        candidate_tags = api_client.list_tags()
+        candidate_tags = client.list_tags()
     previous_tag, _ = resolve_current_tag(
         latest_tag=normalized_base_tag or None,
         tags=candidate_tags,
@@ -925,7 +918,7 @@ def _verify_release_candidate(
         )
 
     current_pull_requests = _discover_pull_requests(
-        client=api_client,
+        client=client,
         base_ref=previous_tag,
         head_ref=resolved_target_ref,
     )
@@ -1535,9 +1528,8 @@ def prepare_release_plan(
     github_token: str,
     target_ref: str,
     base_tag: str,
-    client: GitHubRepositoryClientProtocol | None = None,
+    client: GitHubRepositoryClientProtocol,
     recommendation_runner: RecommendationRunner | None = None,
-    request_timeout: int = 15,
 ) -> ReleasePlan:
     normalized_repository = repository.strip()
     if not normalized_repository:
@@ -1546,15 +1538,10 @@ def prepare_release_plan(
     if not normalized_token:
         raise ValueError("github token is required.")
     resolved_target_ref, target_sha = _resolve_target_ref(target_ref)
-    api_client = client or GitHubRepositoryClient(
-        repository=normalized_repository,
-        token=normalized_token,
-        timeout_seconds=request_timeout,
-    )
     notes: list[str] = []
     candidate_tags = list_tags()
     if not candidate_tags:
-        candidate_tags = api_client.list_tags()
+        candidate_tags = client.list_tags()
     previous_tag, current_tag_notes = resolve_current_tag(
         latest_tag=base_tag.strip() or None,
         tags=candidate_tags,
@@ -1566,7 +1553,7 @@ def prepare_release_plan(
         )
 
     pull_requests = _discover_pull_requests(
-        client=api_client,
+        client=client,
         base_ref=previous_tag,
         head_ref=resolved_target_ref,
     )
@@ -1684,22 +1671,20 @@ def prepare_release_plan(
 def publish_release_plan(
     plan: ReleasePlan,
     *,
-    github_token: str,
     tag_publisher: TagPublisher | None = None,
     release_publisher: ReleasePublisher | None = None,
 ) -> ReleaseExecutionResult:
-    normalized_token = github_token.strip()
-    if not normalized_token:
-        raise ValueError("github token is required.")
     if plan.status == "needs_review":
         return ReleaseExecutionResult(status="needs_review", plan=plan)
     if not plan.next_tag:
         if plan.status == "skipped" or plan.release_label == "NO_BUMP":
             return ReleaseExecutionResult(status="skipped", plan=plan)
         raise RuntimeError("Cannot publish a release plan without a next tag.")
-    tag_publisher_impl = tag_publisher or GitHubTagPublisher(token=normalized_token)
-    release_publisher_impl = release_publisher or GitHubReleasePublisher(token=normalized_token)
-    tag_result = tag_publisher_impl.publish(
+    if tag_publisher is None or release_publisher is None:
+        raise ValueError(
+            "tag_publisher and release_publisher are required for publishable release plans."
+        )
+    tag_result = tag_publisher.publish(
         TagPublishRequest(
             repository=plan.repository,
             tag_name=plan.next_tag,
@@ -1710,7 +1695,7 @@ def publish_release_plan(
         raise RuntimeError(
             tag_result.message or f"Tag publish failed with status {tag_result.status}."
         )
-    release_result = release_publisher_impl.publish(
+    release_result = release_publisher.publish(
         ReleasePublishRequest(
             repository=plan.repository,
             tag_name=plan.next_tag,
@@ -1793,8 +1778,36 @@ def _build_summary_payload(
     }
 
 
+def _build_repository_client(
+    *,
+    repository: str,
+    github_token: str,
+    request_timeout: int,
+) -> GitHubRepositoryClientProtocol:
+    return GitHubRepositoryClient(
+        repository=repository.strip(),
+        token=github_token.strip(),
+        timeout_seconds=request_timeout,
+    )
+
+
+def _build_publishers(*, github_token: str) -> tuple[TagPublisher, ReleasePublisher]:
+    normalized_token = github_token.strip()
+    if not normalized_token:
+        raise ValueError("github token is required.")
+    return (
+        GitHubTagPublisher(token=normalized_token),
+        GitHubReleasePublisher(token=normalized_token),
+    )
+
+
 def run_release_job(args: argparse.Namespace | None = None) -> int:
     parsed = args or _parse_args()
+    repository_client = _build_repository_client(
+        repository=parsed.repository,
+        github_token=parsed.github_token,
+        request_timeout=parsed.request_timeout,
+    )
     if parsed.operation == "publish":
         candidate = _resolve_release_candidate(
             repository=parsed.repository,
@@ -1807,10 +1820,9 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
         plan = _verify_release_candidate(
             candidate=candidate,
             repository=parsed.repository,
-            github_token=parsed.github_token,
             target_ref=parsed.target_ref,
             base_tag=parsed.base_tag,
-            request_timeout=parsed.request_timeout,
+            client=repository_client,
         )
     else:
         plan = prepare_release_plan(
@@ -1818,7 +1830,7 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
             github_token=parsed.github_token,
             target_ref=parsed.target_ref,
             base_tag=parsed.base_tag,
-            request_timeout=parsed.request_timeout,
+            client=repository_client,
         )
         candidate = _build_release_candidate(
             plan=plan,
@@ -1836,7 +1848,12 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
         _serialize_release_candidate(candidate),
     )
     if parsed.operation == "publish":
-        execution = publish_release_plan(plan, github_token=parsed.github_token)
+        tag_publisher, release_publisher = _build_publishers(github_token=parsed.github_token)
+        execution = publish_release_plan(
+            plan,
+            tag_publisher=tag_publisher,
+            release_publisher=release_publisher,
+        )
         release_url = execution.release_result.url if execution.release_result else None
         tag_url = execution.tag_result.url if execution.tag_result else None
         _append_step_summary(

@@ -169,7 +169,6 @@ def test_release_job_flow_plans_and_publishes_release_batch(monkeypatch) -> None
     )
     result = publish_release_plan(
         plan,
-        github_token="token-123",
         tag_publisher=tag_publisher,
         release_publisher=release_publisher,
     )
@@ -237,7 +236,6 @@ def test_release_job_flow_skips_publish_for_no_bump_batch(monkeypatch) -> None:
     )
     result = publish_release_plan(
         plan,
-        github_token="token-123",
         tag_publisher=tag_publisher,
         release_publisher=release_publisher,
     )
@@ -281,7 +279,7 @@ def test_release_job_flow_surfaces_needs_review_batch(monkeypatch) -> None:
         client=client,
         recommendation_runner=runner,
     )
-    result = publish_release_plan(plan, github_token="token-123")
+    result = publish_release_plan(plan)
 
     assert plan.status == "needs_review"
     assert plan.next_tag is None
