@@ -399,6 +399,38 @@ diff --git a/tools/release.pyw b/tools/release.pyw
     )
 
 
+def test_detect_python_findings_ignores_internal_api_modules_without_reexport_evidence() -> None:
+    diff_text = """
+diff --git a/src/internal/api.py b/src/internal/api.py
+--- a/src/internal/api.py
++++ b/src/internal/api.py
+@@ -1,2 +1,2 @@
+-def helper() -> int:
++def helper_v2() -> int:
+     return 1
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
+def test_detect_python_findings_ignores_nested_classes_under_private_intermediate_scope() -> None:
+    diff_text = """
+diff --git a/pkg/mod.py b/pkg/mod.py
+--- a/pkg/mod.py
++++ b/pkg/mod.py
+@@ -1,4 +1,4 @@
+ class Public:
+     class _Private:
+-        class Nested:
++        class RenamedNested:
+             pass
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert findings == []
+
+
 def test_detect_python_findings_ignores_setup_py_python_requires_comments() -> None:
     diff_text = """
 diff --git a/setup.py b/setup.py

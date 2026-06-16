@@ -179,6 +179,15 @@ def _python_class_scope_is_public(scope_stack: list[tuple[str, int, str | None]]
     return all(entry[2] is not None for entry in class_entries)
 
 
+def _python_public_class_path(scope_stack: list[tuple[str, int, str | None]]) -> list[str] | None:
+    class_entries = [entry[2] for entry in scope_stack if entry[0] == "class"]
+    if not class_entries:
+        return []
+    if any(entry is None for entry in class_entries):
+        return None
+    return [entry for entry in class_entries if entry is not None]
+
+
 def _is_public_python_member_symbol(
     symbol: str,
     *,
@@ -344,8 +353,10 @@ def _allows_python_implicit_public_surface(
     *,
     workspace_api_reexport_names: set[str] | None,
 ) -> bool:
-    if _is_python_reexport_surface(path) or _is_python_api_surface(path):
+    if _is_python_reexport_surface(path):
         return True
+    if _is_python_api_surface(path):
+        return bool(workspace_api_reexport_names) or not _is_obviously_internal_python_path(path)
     return not _is_obviously_internal_python_path(path)
 
 
@@ -1056,9 +1067,7 @@ def _infer_python_member_class_from_workspace(
                     scope_stack.append(("def", indent, None))
                 index = next_index
                 continue
-            public_class_path = [
-                entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
-            ]
+            public_class_path = _python_public_class_path(scope_stack)
             has_function_scope = any(entry[0] == "def" for entry in scope_stack)
             if (
                 public_class_path
@@ -1174,13 +1183,13 @@ def _classify_nested_python_constructor_context(
             if body_anchor is None or _python_statement_anchor(
                 next_body_line
             ) == _python_statement_anchor(body_anchor):
-                public_class_depth = len(
-                    [entry for entry in stack if entry[0] == "class" and entry[2] is not None]
-                )
+                public_class_path = _python_public_class_path(stack)
                 has_function_scope = any(entry[0] == "def" for entry in stack)
                 if has_function_scope:
                     return "nonpublic"
-                if public_class_depth > 1:
+                if public_class_path is None:
+                    return "nonpublic"
+                if len(public_class_path) > 1:
                     return "public"
                 return "unknown"
 
@@ -1204,6 +1213,7 @@ def _classify_nested_python_constructor_context_from_hunk(
         return "unknown"
 
     public_class_depth = 0
+    has_private_class_scope = False
     has_function_scope = False
     scope_indent = current_indent
     cursor = change_index - 1
@@ -1223,6 +1233,8 @@ def _classify_nested_python_constructor_context_from_hunk(
             class_name = class_match.group(1)
             if not class_name.startswith("_"):
                 public_class_depth += 1
+            else:
+                has_private_class_scope = True
             scope_indent = candidate_indent
             cursor -= 1
             continue
@@ -1236,6 +1248,8 @@ def _classify_nested_python_constructor_context_from_hunk(
         cursor -= 1
 
     if has_function_scope:
+        return "nonpublic"
+    if has_private_class_scope:
         return "nonpublic"
     if public_class_depth > 1:
         return "public"
@@ -1659,9 +1673,7 @@ def _extract_python_signatures(
                 next_body_line = candidate.strip()
         if _python_indent_level(line) > 0 and not _python_class_scope_is_public(scope_stack):
             continue
-        public_class_path = [
-            entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
-        ]
+        public_class_path = _python_public_class_path(scope_stack)
         has_function_scope = any(entry[0] == "def" for entry in scope_stack)
         if def_match:
             scope_stack.append(("def", indent, None))
@@ -1752,9 +1764,7 @@ def _extract_python_classes(
         else:
             public_name = name
 
-        public_class_path = [
-            entry[2] for entry in scope_stack if entry[0] == "class" and entry[2] is not None
-        ]
+        public_class_path = _python_public_class_path(scope_stack)
         has_function_scope = any(entry[0] == "def" for entry in scope_stack)
         if indent == 0:
             if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
