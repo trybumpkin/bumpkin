@@ -1,0 +1,9 @@
+{
+  "label": "MAJOR",
+  "findings": [
+    {
+      "rule": "python_requires_floor_raised",
+      "severity": "MAJOR"
+    }
+  ]
+}

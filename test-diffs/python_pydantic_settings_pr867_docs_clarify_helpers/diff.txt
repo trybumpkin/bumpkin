@@ -1,0 +1,11 @@
+diff --git a/docs/index.md b/docs/index.md
+--- a/docs/index.md
++++ b/docs/index.md
+@@ -92,15 +92,15 @@ print(Settings().model_dump())
+-3. The [`AliasChoices`][pydantic.AliasChoices] class allows to have multiple environment variable names for a single field.
++3. The [`AliasChoices`][pydantic.AliasChoices] class allows you to have multiple environment variable names for a single field.
+    The first environment variable that is found will be used.
+@@ -2271,7 +2271,7 @@ Same as `case_sensitive`, but works for secrets only. If not specified, defaults
+-This option is used to implement _nested secrets directory_ layout and allows to do even nasty things
++This option is used to implement _nested secrets directory_ layout and allows you to do even nasty things
+ like `/run/secrets/model/delim/nested1/delim/nested2`.

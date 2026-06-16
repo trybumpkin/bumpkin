@@ -33,7 +33,7 @@ def get_language_hints_for_groups(groups: list[str]) -> list[str]:
 def _language_group_for_suffix(suffix: str) -> str | None:
     if suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
         return "javascript-typescript"
-    if suffix == ".py":
+    if suffix in {".py", ".pyi", ".pyw"}:
         return "python"
     if suffix == ".go":
         return "go"
@@ -44,6 +44,17 @@ def _language_group_for_suffix(suffix: str) -> str | None:
     return None
 
 
+def _is_python_packaging_metadata_path(file_path: str) -> bool:
+    normalized = str(file_path).strip().replace("\\", "/").lower()
+    return normalized.endswith(("pyproject.toml", "setup.cfg", "setup.py"))
+
+
+def _language_group_for_path(file_path: str) -> str | None:
+    if _is_python_packaging_metadata_path(file_path):
+        return "python"
+    return _language_group_for_suffix(Path(file_path).suffix.lower())
+
+
 def detect_language_hints(file_paths: list[str]) -> list[str]:
     groups = detect_language_groups(file_paths)
     return get_language_hints_for_groups(groups)
@@ -52,7 +63,7 @@ def detect_language_hints(file_paths: list[str]) -> list[str]:
 def detect_language_groups(file_paths: list[str]) -> list[str]:
     groups: set[str] = set()
     for file_path in file_paths:
-        group = _language_group_for_suffix(Path(file_path).suffix.lower())
+        group = _language_group_for_path(file_path)
         if group:
             groups.add(group)
 

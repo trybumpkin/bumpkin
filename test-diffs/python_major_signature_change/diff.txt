@@ -1,2 +1,0 @@
-- def parse_user(user: str) -> str:
-+ def parse_user(user: str, strict: bool) -> str:

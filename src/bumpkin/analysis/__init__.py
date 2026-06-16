@@ -17,6 +17,8 @@ from .findings import (
     Finding,
     aggregate_findings,
     detect_js_ts_export_findings,
+    detect_python_api_findings,
+    detect_semver_findings,
 )
 from .impact import summarize_impact
 from .language import detect_language_groups, detect_language_hints
@@ -39,6 +41,8 @@ __all__ = [
     "detect_js_ts_export_findings",
     "detect_language_groups",
     "detect_language_hints",
+    "detect_python_api_findings",
+    "detect_semver_findings",
     "render_case_file_text",
     "resolve_refs",
     "summarize_evidence_items",

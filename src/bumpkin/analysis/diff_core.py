@@ -57,6 +57,7 @@ class DiffResult:
     scope_unexpected_files: int
     scope_missing_files: int
     notes: list[str]
+    repo_root: str | None = None
 
 
 def run_git(args: list[str]) -> str:
@@ -81,6 +82,10 @@ def latest_tag(run_git_fn: Callable[[list[str]], str] = run_git) -> str | None:
 
 def initial_commit(run_git_fn: Callable[[list[str]], str] = run_git) -> str:
     return run_git_fn(["rev-list", "--max-parents=0", "HEAD"]).splitlines()[0].strip()
+
+
+def repository_root(run_git_fn: Callable[[list[str]], str] = run_git) -> str:
+    return run_git_fn(["rev-parse", "--show-toplevel"]).strip()
 
 
 def resolve_refs(
@@ -226,6 +231,18 @@ def dedupe_preserve_order(items: list[str]) -> list[str]:
     return deduped
 
 
+def _resolve_repo_root(
+    repository_root_fn: Callable[[], str],
+    *,
+    notes: list[str],
+) -> str | None:
+    try:
+        return repository_root_fn()
+    except RuntimeError:
+        notes.append("Repository root lookup was unavailable; continuing without repo_root.")
+        return None
+
+
 def build_diff(
     from_ref: str,
     to_ref: str,
@@ -245,6 +262,7 @@ def build_diff(
     estimate_tokens_fn: Callable[[str], int] = estimate_tokens,
     truncate_fn: Callable[[str, int], tuple[str, bool]] = truncate,
     dedupe_preserve_order_fn: Callable[[list[str]], list[str]] = dedupe_preserve_order,
+    repository_root_fn: Callable[[], str] = repository_root,
 ) -> DiffResult:
     ignores = list(ignore_patterns or DEFAULT_IGNORES)
     notes: list[str] = []
@@ -275,6 +293,7 @@ def build_diff(
 
     if not kept:
         notes.append("Only ignored files changed; defaulting to NO_BUMP recommendation.")
+        repo_root = _resolve_repo_root(repository_root_fn, notes=notes)
         return DiffResult(
             from_ref=from_ref,
             to_ref=to_ref,
@@ -293,6 +312,7 @@ def build_diff(
             scope_unexpected_files=len(unexpected_paths),
             scope_missing_files=scope_missing_files,
             notes=notes,
+            repo_root=repo_root,
         )
 
     preprocessor_notes: list[str] = []
@@ -349,6 +369,7 @@ def build_diff(
 
     notes.append(f"Analyzed {len(kept)} file(s) after filtering.")
     notes.append(f"Approx. prompt tokens: {approx_prompt_tokens}")
+    repo_root = _resolve_repo_root(repository_root_fn, notes=notes)
 
     return DiffResult(
         from_ref=from_ref,
@@ -368,4 +389,5 @@ def build_diff(
         scope_unexpected_files=len(unexpected_paths),
         scope_missing_files=scope_missing_files,
         notes=notes,
+        repo_root=repo_root,
     )

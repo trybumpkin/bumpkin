@@ -1,5 +1,5 @@
 {
-  "prompt_version": "generic-v0",
+  "prompt_version": "python-v1",
   "evaluation_mode": "pipeline_parity",
   "promotion_status": "experimental",
   "fixture_set": "test-diffs",
@@ -7,7 +7,7 @@
   "required_schema_valid_rate": 1.0,
   "min_ambiguous_low_confidence_rate": 0.0,
   "min_category_pass_rates": {
-    "major_signature_change": 0.0,
+    "python_support_floor_raise": 0.0,
     "minor_export_added": 0.0,
     "patch_internal_refactor": 0.0,
     "no_bump_docs_only": 0.0

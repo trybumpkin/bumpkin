@@ -239,6 +239,17 @@ def test_run_court_advisory_marks_manual_review_on_disagreement(monkeypatch) -> 
     assert model == "openai/gpt-5-mini"
 
 
+def test_build_court_messages_includes_language_hints() -> None:
+    messages = court_module.build_court_messages(
+        case_file_text="{}",
+        engine_label="MINOR",
+        language_hints=["For Python, treat __all__ exports as public API candidates."],
+    )
+
+    assert "Language-specific API hints:" in messages[1]["content"]
+    assert "__all__ exports as public API candidates" in messages[1]["content"]
+
+
 def test_call_model_attempts_repair_on_parse_failure(monkeypatch) -> None:
     class _FakeResponse:
         def __enter__(self) -> Self:

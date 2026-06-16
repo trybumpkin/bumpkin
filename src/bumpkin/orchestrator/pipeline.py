@@ -174,13 +174,16 @@ def run(args: Namespace) -> int:
     elif len(detected_language_groups) == 0:
         prompt_language_group = "generic"
     else:
-        prompt_language_group = None
+        prompt_language_group = "generic"
     prompt_metadata = get_prompt_metadata(language_group=prompt_language_group)
     if len(detected_language_groups) > 1:
         notes.append(
             "Detected multiple language groups; using the experimental generic prompt pack."
         )
-    elif prompt_metadata.promotion_status != "promoted":
+    elif (
+        getattr(prompt_metadata, "language_group", prompt_language_group) == "generic"
+        and prompt_metadata.promotion_status != "promoted"
+    ):
         notes.append(
             "Using an experimental generic prompt pack because no promoted language-specific pack matched."
         )
@@ -223,6 +226,7 @@ def run(args: Namespace) -> int:
         scope_mismatch_reason=scope_mismatch_reason,
         scope_guard=scope_guard,
         public_api_hints=public_api_hints,
+        language_hints=language_hints,
     )
 
     output = core_result.output

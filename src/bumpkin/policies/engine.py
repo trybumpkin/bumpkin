@@ -9,6 +9,18 @@ from bumpkin.versioning.tags import parse_tag
 
 from .guards import is_docs_or_config_path
 
+PYTHON_PUBLIC_EVIDENCE_RULES = {
+    "python_api_module_import_binding_changed",
+    "python_api_module_import_surface_changed",
+    "python_api_module_local_surface_changed",
+    "python_nested_constructor_changed",
+    "python_constructor_ambiguous",
+}
+PYTHON_BREAKING_EVIDENCE_RULES = {
+    "python_nested_constructor_changed",
+    "python_constructor_ambiguous",
+}
+
 
 def _to_int(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
@@ -104,6 +116,14 @@ def path_matches_hints(path: str, hints: list[str]) -> bool:
     return False
 
 
+def _is_internal_path_part(part: str, internal_dirs: set[str]) -> bool:
+    normalized = part.strip().lower()
+    if normalized in internal_dirs or normalized.startswith("_"):
+        return True
+    tokens = [token for token in re.split(r"[-_.]+", normalized) if token]
+    return any(token in internal_dirs for token in tokens)
+
+
 def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> str:
     evidence = finding.evidence
     if not evidence:
@@ -112,6 +132,35 @@ def classify_finding_boundary(finding: Finding, *, public_hints: list[str]) -> s
     path = str(first.get("path", "")).strip()
     if not path:
         return "unknown"
+    if finding.rule == "python_requires_floor_raised":
+        normalized = path.strip().replace("\\", "/").strip("/").lower()
+        parts = [part for part in normalized.split("/") if part]
+        internal_dirs = {
+            "bench",
+            "benches",
+            "benchmark",
+            "benchmarks",
+            "build",
+            "builds",
+            "ci",
+            "docs",
+            "doc",
+            "example",
+            "examples",
+            "internal",
+            "internals",
+            "scripts",
+            "test",
+            "tests",
+            "testing",
+            "tool",
+            "tools",
+        }
+        if is_docs_or_config_path(path) and len(parts) > 1:
+            return "internal"
+        if any(_is_internal_path_part(part, internal_dirs) for part in parts[:-1]):
+            return "internal"
+        return "public"
     if is_docs_or_config_path(path):
         return "internal"
     if not public_hints:
@@ -331,15 +380,25 @@ def summarize_evidence(
     for finding in findings:
         severity = finding.severity.upper()
         boundary = classify_finding_boundary(finding, public_hints=public_hints)
-        if severity in {"MINOR", "MAJOR"} and boundary == "unknown":
+        if (
+            severity in {"MINOR", "MAJOR"}
+            or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES
+            or finding.rule == "python_requires_floor_raised"
+        ) and boundary == "unknown":
             unknown_impactful += 1
-        if not finding.rule.startswith("export_"):
+        if (
+            finding.rule == "python_requires_floor_raised"
+            or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES
+        ):
+            if boundary != "public":
+                continue
+        elif not finding.rule.startswith("export_"):
             continue
         if boundary == "internal":
             continue
-        if severity in {"MINOR", "MAJOR"}:
+        if severity in {"MINOR", "MAJOR"} or finding.rule in PYTHON_PUBLIC_EVIDENCE_RULES:
             export_public += 1
-        if severity == "MAJOR":
+        if severity == "MAJOR" or finding.rule in PYTHON_BREAKING_EVIDENCE_RULES:
             export_breaking += 1
 
     contract_public = _to_int(contract_signals.get("total", 0), default=0)

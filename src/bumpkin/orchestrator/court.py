@@ -474,7 +474,12 @@ def _validate_court_payload(
     }
 
 
-def build_court_messages(*, case_file_text: str, engine_label: str) -> list[dict[str, str]]:
+def build_court_messages(
+    *,
+    case_file_text: str,
+    engine_label: str,
+    language_hints: list[str] | None = None,
+) -> list[dict[str, str]]:
     system = (
         "You are Compatibility Court. Reason over the provided case file and return strict JSON only. "
         "Required keys: label, confidence, judge_summary, prosecutor_claims, defender_claims, "
@@ -491,8 +496,15 @@ def build_court_messages(*, case_file_text: str, engine_label: str) -> list[dict
         "2) Defender argues for lower-impact bump from evidence.\n"
         "3) Judge issues final verdict with accepted/rejected arguments and unresolved risks.\n\n"
         f"Deterministic engine label: {engine_label}\n\n"
-        "Case file:\n"
-        f"{case_file_text}\n"
+        + (
+            "Language-specific API hints:\n"
+            + "".join(f"- {hint}\n" for hint in language_hints)
+            + "\n"
+            if language_hints
+            else ""
+        )
+        + "Case file:\n"
+        + f"{case_file_text}\n"
     )
     return [
         {"role": "system", "content": system},
@@ -742,6 +754,7 @@ def run_court_advisory(
     request_timeout: int,
     engine_label: str | None,
     case_file_text: str,
+    language_hints: list[str] | None = None,
 ) -> tuple[dict[str, Any], str | None, str | None]:
     if not engine_label:
         return (
@@ -806,7 +819,11 @@ def run_court_advisory(
             None,
         )
 
-    messages = build_court_messages(case_file_text=case_file_text, engine_label=engine_label)
+    messages = build_court_messages(
+        case_file_text=case_file_text,
+        engine_label=engine_label,
+        language_hints=language_hints,
+    )
     valid_evidence_ids = _extract_case_file_evidence_ids(case_file_text)
     try:
         parsed, used_model = _call_with_fallback(

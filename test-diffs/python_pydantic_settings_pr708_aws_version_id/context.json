@@ -1,0 +1,8 @@
+{
+  "language": "python",
+  "category": "minor_export_added",
+  "surface_area": [
+    "pydantic_settings/sources/providers/aws.py"
+  ],
+  "note": "Real merged PR from pydantic/pydantic-settings (#708). Adding an optional version_id parameter to a public AWS settings source constructor should be treated as a backward-compatible API expansion."
+}

@@ -1,6 +1,32 @@
 from typing import Self
 
+from bumpkin.analysis.diffing import DiffResult
 from bumpkin.orchestrator import core as core_module
+
+
+def test_workspace_loader_for_diff_result_skips_synthetic_eval_diffs() -> None:
+    diff_result = DiffResult(
+        from_ref="fixture/base",
+        to_ref="fixture/head",
+        repo_root=None,
+        diff_text="diff --git a/pkg/api.py b/pkg/api.py\n",
+        full_diff_text="diff --git a/pkg/api.py b/pkg/api.py\n",
+        truncated=False,
+        analyzed_files=["pkg/api.py"],
+        file_units=[],
+        changed_files_total=1,
+        ignored_files_total=0,
+        approx_prompt_tokens=1,
+        approx_full_tokens=1,
+        capped_files=0,
+        scope_allowlist_files_total=0,
+        scope_overlap_files=0,
+        scope_unexpected_files=0,
+        scope_missing_files=0,
+        notes=[],
+    )
+
+    assert core_module._workspace_loader_for_diff_result(diff_result) is None
 
 
 def test_should_skip_court_for_high_confidence_minor() -> None:

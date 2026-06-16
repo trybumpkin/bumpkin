@@ -12,7 +12,12 @@ from typing import Any, cast
 from bumpkin.analysis.case_file import build_case_file, render_case_file_text
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.evidence import build_evidence_items, summarize_evidence_items
-from bumpkin.analysis.findings import Finding, aggregate_findings, detect_js_ts_export_findings
+from bumpkin.analysis.findings import (
+    Finding,
+    aggregate_findings,
+    build_filesystem_workspace_loader,
+    detect_semver_findings,
+)
 from bumpkin.analysis.impact import summarize_impact
 from bumpkin.config import BumpkinConfig
 from bumpkin.contracts import build_coverage_contract
@@ -121,6 +126,13 @@ class CoreAnalysisResult:
     proof_obligations: dict[str, Any]
     reasoning_trace: list[dict[str, Any]]
     contradictions: list[dict[str, Any]]
+
+
+def _workspace_loader_for_diff_result(diff_result: DiffResult):
+    repo_root = (diff_result.repo_root or "").strip()
+    if not repo_root:
+        return None
+    return build_filesystem_workspace_loader(repo_root)
 
 
 def _changelog_for_label(label: str) -> str:
@@ -1656,6 +1668,7 @@ def analyze_diff_core(
     scope_mismatch_reason: str | None = None,
     scope_guard: dict[str, object] | None = None,
     public_api_hints: list[str] | None = None,
+    language_hints: list[str] | None = None,
 ) -> CoreAnalysisResult:
     local_notes = list(notes or [])
     labels = list(event_labels or [])
@@ -1666,8 +1679,12 @@ def analyze_diff_core(
         diff_result.analyzed_files,
         policy=bumpkin_config.behavior_contract_policy,
     )
+    workspace_loader = _workspace_loader_for_diff_result(diff_result)
     findings = (
-        detect_js_ts_export_findings(diff_result.full_diff_text)
+        detect_semver_findings(
+            diff_result.full_diff_text,
+            workspace_loader=workspace_loader,
+        )
         if diff_result.full_diff_text and not scope_mismatch_detected
         else []
     )
@@ -2034,6 +2051,7 @@ def analyze_diff_core(
                 request_timeout=request_timeout,
                 engine_label=deterministic_label,
                 case_file_text=render_case_file_text(case_file),
+                language_hints=language_hints,
             )
         )
 

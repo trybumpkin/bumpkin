@@ -1,3 +1,0 @@
-diff --git a/docs/python.md b/docs/python.md
-+## Usage
-+Document python runtime notes.

@@ -1,4 +1,0 @@
-- def _normalize_user(value: str) -> str:
--     return value
-+ def _normalize_user(value: str) -> str:
-+     return value.strip()

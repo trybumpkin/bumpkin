@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 DEFAULT_LANGUAGE_GROUP = "javascript-typescript"
 PROMPT_VERSION = "js-ts-v1"
+PYTHON_PROMPT_VERSION = "python-v1"
 GENERIC_PROMPT_VERSION = "generic-v0"
 
 SYSTEM_PROMPT = (
@@ -49,6 +50,16 @@ GENERIC_PUBLIC_API_RULES = (
     "- Changing the required parameters or return contract of a public symbol is usually MAJOR.\n"
     "- Adding a new public symbol is usually MINOR if existing callers remain compatible.\n"
     "- Changes to internal helpers, docs, tests, or implementation-only details are PATCH.\n"
+)
+PYTHON_PUBLIC_API_RULES = (
+    "Python public API rules:\n"
+    "- Treat names exported via __all__ as public API.\n"
+    "- When __all__ is absent, treat top-level names without a leading underscore as public API candidates.\n"
+    "- Treat public class constructors and public top-level functions as part of the supported API surface.\n"
+    "- Removing a public symbol or raising the minimum supported Python version is usually MAJOR.\n"
+    "- Adding a new public symbol or only optional constructor/function parameters is usually MINOR.\n"
+    "- Internal underscore helpers, tests, and docs-only changes are PATCH or NO_BUMP unless stronger "
+    "evidence says otherwise.\n"
 )
 
 REQUIRED_FEW_SHOT_CATEGORIES = {
@@ -163,6 +174,68 @@ FEW_SHOT_EXAMPLES = [
         },
     ),
 ]
+PYTHON_FEW_SHOT_EXAMPLES = [
+    FewShotExample(
+        category="minor_export_added",
+        diff_text=(
+            "class Settings(BaseSettings):\n"
+            "    pass\n\n"
+            "+def list_users() -> list[str]:\n"
+            "+    return []"
+        ),
+        output={
+            "label": "MINOR",
+            "confidence": "high",
+            "reasoning": "A new public top-level Python function list_users was added without "
+            "breaking existing imports or call signatures.",
+            "changelog": "feat: add list_users helper",
+        },
+    ),
+    FewShotExample(
+        category="major_signature_change",
+        diff_text=(
+            "class TomlConfigSettingsSource:\n"
+            "-    def __init__(self, settings_cls: type[BaseSettings], toml_file: PathType | None = "
+            "DEFAULT_PATH):\n"
+            "+    def __init__(self, settings_cls: type[BaseSettings], toml_file: PathType | None = "
+            "DEFAULT_PATH, strict: bool):"
+        ),
+        output={
+            "label": "MAJOR",
+            "confidence": "high",
+            "reasoning": "The public constructor TomlConfigSettingsSource.__init__ gained a required "
+            "parameter, which breaks existing callers.",
+            "changelog": "feat: change TomlConfigSettingsSource constructor",
+        },
+    ),
+    FewShotExample(
+        category="patch_internal_refactor",
+        diff_text=(
+            "-def _normalize_user(value: str) -> str:\n"
+            "-    return value\n"
+            "+def _normalize_user(value: str) -> str:\n"
+            "+    return value.strip()"
+        ),
+        output={
+            "label": "PATCH",
+            "confidence": "high",
+            "reasoning": "Only an internal underscore-prefixed helper changed, with no clear public "
+            "API addition or break.",
+            "changelog": "fix: tighten internal normalization logic",
+        },
+    ),
+    FewShotExample(
+        category="python_support_floor_raise",
+        diff_text=('-requires-python = ">=3.9"\n+requires-python = ">=3.10"'),
+        output={
+            "label": "MAJOR",
+            "confidence": "high",
+            "reasoning": "The package raised its minimum supported Python version, which is a "
+            "breaking compatibility change for users on the dropped runtime.",
+            "changelog": "feat: raise minimum supported Python version",
+        },
+    ),
+]
 
 JS_TS_PROMPT_PACK = PromptPack(
     metadata=PromptPackMetadata(
@@ -186,9 +259,21 @@ GENERIC_PROMPT_PACK = PromptPack(
     system_prompt=SYSTEM_PROMPT,
     language_rules=GENERIC_PUBLIC_API_RULES,
 )
+PYTHON_PROMPT_PACK = PromptPack(
+    metadata=PromptPackMetadata(
+        prompt_version=PYTHON_PROMPT_VERSION,
+        language_group="python",
+        promotion_status="experimental",
+        fixture_set="test-diffs",
+    ),
+    system_prompt=SYSTEM_PROMPT,
+    language_rules=PYTHON_PUBLIC_API_RULES,
+    few_shot_examples=tuple(PYTHON_FEW_SHOT_EXAMPLES),
+)
 
 PROMPT_PACKS_BY_VERSION = {
     JS_TS_PROMPT_PACK.metadata.prompt_version: JS_TS_PROMPT_PACK,
+    PYTHON_PROMPT_PACK.metadata.prompt_version: PYTHON_PROMPT_PACK,
     GENERIC_PROMPT_PACK.metadata.prompt_version: GENERIC_PROMPT_PACK,
 }
 
@@ -205,6 +290,8 @@ def get_prompt_pack(
 
     if language_group in {None, DEFAULT_LANGUAGE_GROUP}:
         return JS_TS_PROMPT_PACK
+    if language_group == "python":
+        return PYTHON_PROMPT_PACK
 
     return GENERIC_PROMPT_PACK
 
