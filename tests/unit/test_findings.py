@@ -2395,6 +2395,40 @@ diff --git a/pkg/__init__.py b/pkg/__init__.py
     assert any("ServiceClient" in finding.title for finding in findings)
 
 
+def test_detect_python_findings_detects_plain_import_reexport_rename() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-import client
++import service_client
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_symbol_removed" for finding in findings)
+    assert any("client" in finding.title for finding in findings)
+    assert any(finding.rule == "export_symbol_added" for finding in findings)
+    assert any("service_client" in finding.title for finding in findings)
+
+
+def test_detect_python_findings_detects_dotted_import_reexport_target_change() -> None:
+    diff_text = """
+diff --git a/pkg/api.py b/pkg/api.py
+--- a/pkg/api.py
++++ b/pkg/api.py
+@@ -1,1 +1,1 @@
+-import pkg.client
++import pkg.service_client
+"""
+
+    findings = detect_python_api_findings(diff_text)
+
+    assert any(finding.rule == "export_reexport_target_changed" for finding in findings)
+    assert any("pkg" in finding.title for finding in findings)
+
+
 def test_detect_python_findings_ignores_regular_module_relative_import_churn(
     tmp_path: Path,
     monkeypatch,

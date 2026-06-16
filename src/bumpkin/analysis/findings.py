@@ -740,7 +740,7 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
                 exports.add(exported_name)
     elif isinstance(statement, ast.Import):
         for alias in statement.names:
-            if alias.asname is None or not (
+            if not (
                 _is_python_api_surface(path)
                 or (
                     package_root is not None
@@ -748,10 +748,20 @@ def _extract_python_imported_names(statement_source: str, *, path: str) -> set[s
                 )
             ):
                 continue
-            exported_name = alias.asname
+            exported_name = _python_import_binding_name(alias)
+            if exported_name is None:
+                continue
             if not exported_name.startswith("_"):
                 exports.add(exported_name)
     return exports
+
+
+def _python_import_binding_name(alias: ast.alias) -> str | None:
+    if alias.asname is not None:
+        return alias.asname
+    if not alias.name:
+        return None
+    return alias.name.split(".", 1)[0]
 
 
 def _extract_python_explicit_import_alias_names(statement_source: str, *, path: str) -> set[str]:
@@ -808,8 +818,7 @@ def _is_python_public_reexport_statement(statement: ast.stmt, *, path: str) -> b
     ) or (
         isinstance(statement, ast.Import)
         and any(
-            alias.asname is not None
-            and (
+            (
                 _is_python_api_surface(path)
                 or (
                     package_root is not None
@@ -1541,9 +1550,9 @@ def _extract_python_public_import_bindings(
                 bindings[exported_name] = f"{module_ref}:{alias.name}"
         elif isinstance(statement, ast.Import):
             for alias in statement.names:
-                if alias.asname is None:
+                exported_name = _python_import_binding_name(alias)
+                if exported_name is None:
                     continue
-                exported_name = alias.asname
                 if (
                     not import_only_api_facade
                     and explicit_public_names is not None
