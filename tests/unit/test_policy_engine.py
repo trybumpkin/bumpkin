@@ -41,11 +41,11 @@ def test_python_requires_floor_raise_respects_public_hints() -> None:
 def test_python_requires_floor_raise_in_root_metadata_counts_as_public_with_hints() -> None:
     finding = _python_floor_finding("pyproject.toml")
 
-    assert classify_finding_boundary(finding, public_hints=["src/**"]) == "unknown"
+    assert classify_finding_boundary(finding, public_hints=["src/**"]) == "public"
     assert summarize_boundary([finding], public_hints=["src/**"]) == {
-        "public": 0,
+        "public": 1,
         "internal": 0,
-        "unknown": 1,
+        "unknown": 0,
     }
 
 
