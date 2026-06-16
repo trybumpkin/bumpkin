@@ -291,6 +291,39 @@ diff --git a/pyproject.toml b/pyproject.toml
     assert findings[0].severity == "MAJOR"
 
 
+def test_detect_python_findings_support_floor_raise_with_compatible_release_constraint() -> None:
+    diff_text = """
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,2 +1,2 @@
+-requires-python = "~=3.8"
++requires-python = "~=3.9"
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
+def test_detect_python_findings_support_floor_raise_with_strict_greater_than_constraint() -> None:
+    diff_text = """
+diff --git a/setup.cfg b/setup.cfg
+--- a/setup.cfg
++++ b/setup.cfg
+@@ -1,2 +1,2 @@
+ [options]
+-python_requires = >3.8
++python_requires = >3.9
+"""
+    findings = detect_python_api_findings(diff_text)
+
+    assert len(findings) == 1
+    assert findings[0].rule == "python_requires_floor_raised"
+    assert findings[0].severity == "MAJOR"
+
+
 def test_detect_python_findings_support_floor_raise_in_root_setup_py() -> None:
     diff_text = """
 diff --git a/setup.py b/setup.py
@@ -359,6 +392,42 @@ def test_detect_python_findings_detects_reexported_private_helper_from_parent_pa
     package_dir.mkdir(parents=True)
     (tmp_path / "python" / "acme" / "__init__.py").write_text(
         "from .pkg.client import _create_client as Client\n",
+        encoding="utf-8",
+    )
+    target = package_dir / "client.py"
+    target.write_text(
+        "def _create_client(timeout: int = 1) -> int:\n    return timeout\n",
+        encoding="utf-8",
+    )
+    rel = target.relative_to(tmp_path).as_posix()
+    diff_text = f"""
+diff --git a/{rel} b/{rel}
+--- a/{rel}
++++ b/{rel}
+@@ -1,2 +1,2 @@
+-def _create_client(timeout: int = 1) -> int:
++def _create_client(timeout: int) -> int:
+     return timeout
+"""
+    findings = detect_python_api_findings(diff_text, workspace_loader=workspace_loader)
+
+    assert any(
+        finding.rule == "export_signature_requiredness_tightening"
+        and "_create_client" in finding.title
+        for finding in findings
+    )
+
+
+def test_detect_python_findings_detects_reexported_private_helper_from_parent_package_under_packages_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workspace_loader = _workspace_loader(tmp_path)
+    package_dir = tmp_path / "packages" / "foo"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "from foo.client import _create_client as Client\n",
         encoding="utf-8",
     )
     target = package_dir / "client.py"

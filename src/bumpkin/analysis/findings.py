@@ -18,7 +18,19 @@ CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
 PYTHON_EXTENSIONS = (".py", ".pyi", ".pyw")
-PYTHON_SOURCE_ROOT_NAMES = {"src", "python", "lib"}
+PYTHON_SOURCE_ROOT_NAMES = {
+    "src",
+    "python",
+    "lib",
+    "package",
+    "packages",
+    "app",
+    "apps",
+    "service",
+    "services",
+    "backend",
+    "backends",
+}
 DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
     r"""^\s*requires-python\s*=\s*["']([^"']+)["']""",
@@ -1813,10 +1825,13 @@ def _extract_python_classes(
 
 
 def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | None:
-    match = re.search(r">=\s*(\d+(?:\.\d+)*)", constraint)
+    match = re.search(r"(?P<op>>=|>|~=)\s*(?P<version>\d+(?:\.\d+)*)", constraint)
     if not match:
         return None
-    return tuple(int(part) for part in match.group(1).split("."))
+    parts = [int(part) for part in match.group("version").split(".")]
+    if match.group("op") == ">":
+        parts[-1] += 1
+    return tuple(parts)
 
 
 def _resolve_setup_py_string_value(
