@@ -13,8 +13,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 
+from bumpkin.integrations.github.http_client import DEFAULT_GITHUB_HTTP_CLIENT, GitHubHttpClient
 from bumpkin.integrations.github.types import AppEvent
-from bumpkin.io.github_http import collect_paginated_github_json_list, github_request_json
 from bumpkin.io.tokens import is_valid_models_endpoint
 from bumpkin.orchestrator import pipeline as orchestrator_pipeline
 
@@ -190,12 +190,12 @@ def _cap_file_diff(block: str, max_chars: int) -> tuple[str, bool]:
 
 
 def _fetch_pull_request_files(
-    *, repository: str, pr_number: int, token: str
+    *, repository: str, pr_number: int, token: str, http_client: GitHubHttpClient
 ) -> list[Mapping[str, object]]:
     if not token.strip():
         raise RuntimeError("github api fallback requires a provider token.")
     url = f"https://api.github.com/repos/{repository}/pulls/{pr_number}/files?per_page=100"
-    payload = collect_paginated_github_json_list(
+    payload = http_client.collect_paginated_json_list(
         url=url,
         token=token,
         user_agent="bumpkin-app",
@@ -423,10 +423,12 @@ class GitHubRecommendationCommentPublisher:
         token: str,
         user_agent: str = "bumpkin-app",
         timeout_seconds: int = 10,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         self._token = token.strip()
         self._user_agent = user_agent.strip() or "bumpkin-app"
         self._timeout_seconds = timeout_seconds
+        self._http_client = http_client
 
     def publish(self, *, repository: str, issue_number: int, body: str) -> str | None:
         if not self._token:
@@ -446,7 +448,7 @@ class GitHubRecommendationCommentPublisher:
         method: str,
         payload: dict[str, Any] | None = None,
     ) -> object:
-        response, _headers = github_request_json(
+        response, _headers = self._http_client.request_json(
             url=url,
             method=method,
             timeout_seconds=self._timeout_seconds,
@@ -469,6 +471,7 @@ class PipelineRecommendationRunner:
         request_timeout: int | None = None,
         token_cap: int | None = None,
         use_difftastic: str | None = None,
+        http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
         self._mode = mode or os.getenv("BUMPKIN_PROVIDER", "auto")
         self._model = model or os.getenv("BUMPKIN_MODEL", "")
@@ -482,6 +485,7 @@ class PipelineRecommendationRunner:
         )
         self._token_cap = token_cap if token_cap is not None else 6000
         self._use_difftastic = use_difftastic or os.getenv("BUMPKIN_USE_DIFFTASTIC", "")
+        self._http_client = http_client
 
     def generate(self, request: MergeRecommendationRequest) -> MergeRecommendation:
         repository = (request.event.repository or "").strip()
@@ -509,6 +513,7 @@ class PipelineRecommendationRunner:
                 repository=repository,
                 pr_number=pr_number,
                 token=token,
+                http_client=self._http_client,
             )
             fallback_diff_builder = _build_github_api_diff_fallback(pr_files=pr_files)
 
