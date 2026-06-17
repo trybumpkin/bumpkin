@@ -137,7 +137,10 @@ def test_installation_token_provider_uses_injected_http_client() -> None:
 
 def test_issue_comment_publisher_uses_injected_http_client() -> None:
     http_client = _FakeGitHubHttpClient()
-    http_client.next_json_response = ({"html_url": "https://github.com/acme/repo/issues/7#comment"}, {})
+    http_client.next_json_response = (
+        {"html_url": "https://github.com/acme/repo/issues/7#comment"},
+        {},
+    )
     publisher = GitHubIssueCommentPublisher(token="token-123", http_client=http_client)
 
     result = publisher.publish(
@@ -152,7 +155,10 @@ def test_issue_comment_publisher_uses_injected_http_client() -> None:
     )
 
     assert result == "https://github.com/acme/repo/issues/7#comment"
-    assert http_client.json_calls[0]["url"] == "https://api.github.com/repos/acme/repo/issues/7/comments"
+    assert (
+        http_client.json_calls[0]["url"]
+        == "https://api.github.com/repos/acme/repo/issues/7/comments"
+    )
 
 
 def test_workflow_dispatcher_uses_injected_http_client() -> None:
