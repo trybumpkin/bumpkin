@@ -399,7 +399,6 @@ def test_publish_release_plan_accepts_existing_tag_and_updates_release() -> None
 
     result = publish_release_plan(
         plan,
-        github_token="token-123",
         tag_publisher=tag_publisher,
         release_publisher=release_publisher,
     )
@@ -428,7 +427,7 @@ def test_publish_release_plan_skips_no_bump_batches() -> None:
         notes=(),
     )
 
-    result = publish_release_plan(plan, github_token="token-123")
+    result = publish_release_plan(plan)
 
     assert result.status == "skipped"
     assert result.tag_result is None
@@ -451,7 +450,7 @@ def test_publish_release_plan_skips_empty_release_batches() -> None:
         status="skipped",
     )
 
-    result = publish_release_plan(plan, github_token="token-123")
+    result = publish_release_plan(plan)
 
     assert result.status == "skipped"
     assert result.tag_result is None
@@ -474,7 +473,7 @@ def test_publish_release_plan_blocks_needs_review_batches() -> None:
         status="needs_review",
     )
 
-    result = publish_release_plan(plan, github_token="token-123")
+    result = publish_release_plan(plan)
 
     assert result.status == "needs_review"
     assert result.tag_result is None
@@ -522,7 +521,6 @@ def test_verify_release_candidate_reuses_preview_scope(monkeypatch) -> None:
     verified = _verify_release_candidate(
         candidate=candidate,
         repository="acme/repo",
-        github_token="token-123",
         target_ref="main",
         base_tag="",
         client=client,
@@ -581,11 +579,29 @@ def test_verify_release_candidate_rejects_changed_release_scope(monkeypatch) -> 
         _verify_release_candidate(
             candidate=candidate,
             repository="acme/repo",
-            github_token="token-123",
             target_ref="main",
             base_tag="",
             client=client,
         )
+
+
+def test_publish_release_plan_requires_explicit_publishers_for_real_publish() -> None:
+    plan = ReleasePlan(
+        repository="acme/repo",
+        target_ref="main",
+        target_sha="sha-main",
+        previous_tag="v1.2.3",
+        next_tag="v1.3.0",
+        release_label="MINOR",
+        pull_requests=(),
+        recommendations=(),
+        preview_notes="# Release Preview\n",
+        published_release_body="## Features\n- public change\n",
+        notes=(),
+    )
+
+    with pytest.raises(ValueError, match="tag_publisher and release_publisher are required"):
+        publish_release_plan(plan)
 
 
 def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatch) -> None:
@@ -649,6 +665,62 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
     assert "release_candidate_path<<__BUMPKIN_EOF__" in output_path.read_text(encoding="utf-8")
     assert "planned" in output_path.read_text(encoding="utf-8")
     assert summary_path.read_text(encoding="utf-8").strip() == rendered_preview_notes.strip()
+
+
+def test_run_release_job_preview_builds_repository_client_at_entry_point(
+    tmp_path, monkeypatch
+) -> None:
+    plan = ReleasePlan(
+        repository="acme/repo",
+        target_ref="main",
+        target_sha="sha-main",
+        previous_tag="v1.2.3",
+        next_tag="v1.3.0",
+        release_label="MINOR",
+        pull_requests=(),
+        recommendations=(),
+        preview_notes="# Preview\n",
+        published_release_body="## Features\n- public change\n",
+        notes=(),
+    )
+    repository_client = object()
+    captured: dict[str, object] = {}
+
+    def _build_repository_client(**kwargs: object) -> object:
+        captured["repository_client_kwargs"] = kwargs
+        return repository_client
+
+    def _prepare_release_plan(**kwargs: object) -> ReleasePlan:
+        captured["prepare_release_plan_kwargs"] = kwargs
+        return plan
+
+    monkeypatch.setattr("bumpkin.release_job._build_repository_client", _build_repository_client)
+    monkeypatch.setattr("bumpkin.release_job.prepare_release_plan", _prepare_release_plan)
+
+    exit_code = run_release_job(
+        argparse.Namespace(
+            operation="preview",
+            repository="acme/repo",
+            github_token="token-123",
+            target_ref="main",
+            base_tag="",
+            output_markdown=str(tmp_path / "release-notes.md"),
+            candidate_output=str(tmp_path / "release-candidate.json"),
+            preview_run_id="",
+            request_timeout=15,
+        )
+    )
+
+    assert exit_code == 0
+    assert cast("dict[str, object]", captured["repository_client_kwargs"]) == {
+        "repository": "acme/repo",
+        "github_token": "token-123",
+        "request_timeout": 15,
+    }
+    assert (
+        cast("dict[str, object]", captured["prepare_release_plan_kwargs"])["client"]
+        is repository_client
+    )
 
 
 def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -> None:
@@ -746,6 +818,107 @@ def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -
     assert "Preview run id: 555" in summary_text
     assert "Release candidate verified and published." in summary_text
     assert "## Release rationale" not in summary_text
+
+
+def test_run_release_job_publish_builds_clients_at_entry_point(tmp_path, monkeypatch) -> None:
+    plan = ReleasePlan(
+        repository="acme/repo",
+        target_ref="main",
+        target_sha="sha-main",
+        previous_tag="v1.2.3",
+        next_tag="v1.3.0",
+        release_label="MINOR",
+        pull_requests=(),
+        recommendations=(),
+        preview_notes="# preview\n",
+        published_release_body="## Features\n- public change\n",
+        notes=(),
+    )
+    candidate = _build_release_candidate(
+        plan=plan,
+        base_tag_input="",
+        source_operation="release_preview",
+        source_run_id="555",
+    )
+    execution = ReleaseExecutionResult(
+        status="published",
+        plan=plan,
+        tag_result=TagPublishResult(
+            status="created",
+            tag_name="v1.3.0",
+            url="https://github.com/acme/repo/releases/tag/v1.3.0",
+        ),
+        release_result=ReleasePublishResult(
+            status="created",
+            tag_name="v1.3.0",
+            url="https://github.com/acme/repo/releases/tag/v1.3.0",
+            release_id=42,
+        ),
+    )
+    repository_client = object()
+    tag_publisher = object()
+    release_publisher = object()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "bumpkin.release_job._resolve_release_candidate",
+        lambda **_kwargs: candidate,
+    )
+
+    def _build_repository_client(**kwargs: object) -> object:
+        captured["repository_client_kwargs"] = kwargs
+        return repository_client
+
+    def _verify_release_candidate(**kwargs: object) -> ReleasePlan:
+        captured["verify_release_candidate_kwargs"] = kwargs
+        return plan
+
+    def _build_publishers(**kwargs: object) -> tuple[object, object]:
+        captured["build_publishers_kwargs"] = kwargs
+        return tag_publisher, release_publisher
+
+    def _publish_release_plan(*args: object, **kwargs: object) -> ReleaseExecutionResult:
+        captured["publish_release_plan_args"] = args
+        captured["publish_release_plan_kwargs"] = kwargs
+        return execution
+
+    monkeypatch.setattr("bumpkin.release_job._build_repository_client", _build_repository_client)
+    monkeypatch.setattr("bumpkin.release_job._verify_release_candidate", _verify_release_candidate)
+    monkeypatch.setattr("bumpkin.release_job._build_publishers", _build_publishers)
+    monkeypatch.setattr("bumpkin.release_job.publish_release_plan", _publish_release_plan)
+
+    exit_code = run_release_job(
+        argparse.Namespace(
+            operation="publish",
+            repository="acme/repo",
+            github_token="token-123",
+            target_ref="main",
+            base_tag="",
+            output_markdown=str(tmp_path / "release-notes.md"),
+            candidate_output=str(tmp_path / "release-candidate.json"),
+            preview_run_id="555",
+            request_timeout=15,
+        )
+    )
+
+    assert exit_code == 0
+    assert cast("dict[str, object]", captured["repository_client_kwargs"]) == {
+        "repository": "acme/repo",
+        "github_token": "token-123",
+        "request_timeout": 15,
+    }
+    assert (
+        cast("dict[str, object]", captured["verify_release_candidate_kwargs"])["client"]
+        is repository_client
+    )
+    assert cast("dict[str, object]", captured["build_publishers_kwargs"]) == {
+        "github_token": "token-123"
+    }
+    assert cast("tuple[object, ...]", captured["publish_release_plan_args"]) == (plan,)
+    assert cast("dict[str, object]", captured["publish_release_plan_kwargs"]) == {
+        "tag_publisher": tag_publisher,
+        "release_publisher": release_publisher,
+    }
 
 
 def test_run_release_job_publish_requires_preview_candidate(tmp_path, monkeypatch) -> None:
