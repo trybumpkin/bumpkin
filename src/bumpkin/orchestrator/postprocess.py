@@ -150,9 +150,7 @@ def build_semantic_trace_artifacts(
         final_label=final_label_for_trace,
     )
 
-    updated_decision_trace["decision_authority"] = updated_decision_trace.get(
-        "decision_authority"
-    )
+    updated_decision_trace["decision_authority"] = updated_decision_trace.get("decision_authority")
     updated_decision_trace["deterministic_label"] = deterministic_label
     updated_decision_trace["court_skipped_reason"] = court_skipped_reason
     updated_decision_trace["explainability_rows"] = len(explainability_rows)
@@ -161,9 +159,7 @@ def build_semantic_trace_artifacts(
         "label": court_advisory.get("label"),
         "confidence": court_advisory.get("confidence"),
     }
-    updated_decision_trace["proof_obligations_missing"] = len(
-        proof_obligations.get("missing", [])
-    )
+    updated_decision_trace["proof_obligations_missing"] = len(proof_obligations.get("missing", []))
     updated_decision_trace["reasoning_trace_claims"] = len(reasoning_trace)
     updated_decision_trace["contradiction_count"] = len(contradictions)
 
