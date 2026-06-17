@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from bumpkin.analysis import explanation_facts as explanation_dsl
 from bumpkin.analysis import semantic_review
 from bumpkin.analysis.case_file import build_case_file, render_case_file_text
 from bumpkin.analysis.diffing import DiffResult
@@ -23,6 +22,7 @@ from bumpkin.orchestrator import court_output as orchestrator_court_output
 from bumpkin.orchestrator import explainability as orchestrator_explainability
 from bumpkin.orchestrator import explanation_polish
 from bumpkin.orchestrator import finalize as orchestrator_finalize
+from bumpkin.orchestrator import postprocess as orchestrator_postprocess
 from bumpkin.planner import PlannerDecision
 from bumpkin.policies import engine as policy_engine
 from bumpkin.policies import guards as guard_policies
@@ -715,110 +715,39 @@ def analyze_diff_core(
                 "Court authority mode forced manual review because advisory status was not authoritative."
             )
 
-    explainability_rows: list[dict[str, str]] = []
-    if status == "classified":
-        final_label = str(result.get("label", "")).strip().upper()
-        evidence_lookup_for_rows = _case_file_evidence_lookup(case_file)
-        explainability_rows = _build_explainability_rows(
-            advisory_label=final_label,
-            court_advisory=court_advisory,
-            evidence_lookup=evidence_lookup_for_rows,
-            analyzed_files=diff_result.analyzed_files,
-            diff_text=diff_result.full_diff_text,
-            max_items=8,
-        )
-        semantic_rows = explanation_dsl.filter_semantic_delta_rows(explainability_rows)
-        if not semantic_rows:
-            result = {
-                "status": "manual_review",
-                "label": None,
-                "confidence": None,
-                "reasoning": (
-                    "Explainability contract is unsatisfied because deterministic DSL "
-                    "did not emit semantic delta rows. Manual review is required."
-                ),
-                "changelog": None,
-            }
-            status = "manual_review"
-            classification_source = "explainability-contract"
-            analysis_state = "manual_review"
-            failure_category = "explainability_semantic_contract_unsatisfied"
-            next_tag = None
-            explainability_rows = []
-            local_notes.append(
-                "Fail-closed explainability gate triggered: only path-level or empty explainability rows were available."
-            )
-        else:
-            explainability_rows = semantic_rows
-
-    semantic_facts = explanation_dsl.filter_semantic_delta_rows(explainability_rows)
-    evaluated_label_for_obligations = (
-        str(result.get("label", "")).strip().upper()
-        if status == "classified"
-        else (str(court_advisory.get("label", "")).strip().upper() or deterministic_label)
-    )
-    proof_obligations = _evaluate_proof_obligations(
-        status=status,
-        evaluated_label=evaluated_label_for_obligations,
-        semantic_facts=semantic_facts,
-    )
-    critical_missing_obligations = _critical_missing_proof_obligations(proof_obligations)
-    if status == "classified" and critical_missing_obligations:
-        result = {
-            "status": "manual_review",
-            "label": None,
-            "confidence": None,
-            "reasoning": (
-                "Proof-obligation contract is unsatisfied because critical obligations are missing "
-                f"({', '.join(critical_missing_obligations)}). Manual review is required."
-            ),
-            "changelog": None,
-        }
-        status = "manual_review"
-        classification_source = "proof-obligation-contract"
-        analysis_state = "manual_review"
-        failure_category = failure_category or "proof_obligation_contract_unsatisfied"
-        next_tag = None
-        local_notes.append(
-            "Fail-closed proof-obligation gate triggered: classified output downgraded to manual_review."
-        )
-    proof_obligations["status"] = status
-    final_label_for_trace = (
-        str(result.get("label", "")).strip().upper() if status == "classified" else None
-    )
-    contradictions = _detect_contradictions(
-        event_labels=labels,
-        semantic_facts=semantic_facts,
-        status=status,
-        final_label=final_label_for_trace,
-    )
-    semantic_facts = _prioritize_semantic_facts(
-        semantic_facts,
-        contradiction_paths=_extract_contradiction_paths(contradictions),
-        max_items=8,
-    )
-    if status == "classified":
-        explainability_rows = list(semantic_facts)
-    reasoning_trace = _build_reasoning_trace(
-        semantic_facts=semantic_facts,
-        policy_effects=policy_effects,
-        contradictions=contradictions,
-        final_label=final_label_for_trace,
-    )
-
     decision_trace["decision_authority"] = decision_authority
     decision_trace["deterministic_label"] = deterministic_label
     decision_trace["deterministic_next_tag"] = deterministic_next_tag
-    decision_trace["court_skipped_reason"] = court_skipped_reason
-    decision_trace["explainability_rows"] = len(explainability_rows)
-    decision_trace["court"] = {
-        "status": court_advisory.get("status"),
-        "label": court_advisory.get("label"),
-        "confidence": court_advisory.get("confidence"),
-    }
-    decision_trace["proof_obligations_missing"] = len(proof_obligations.get("missing", []))
-    decision_trace["reasoning_trace_claims"] = len(reasoning_trace)
-    decision_trace["contradiction_count"] = len(contradictions)
+    semantic_trace_artifacts = orchestrator_postprocess.build_semantic_trace_artifacts(
+        result=result,
+        status=status,
+        court_advisory=court_advisory,
+        case_file=case_file,
+        diff_result=diff_result,
+        event_labels=labels,
+        policy_effects=policy_effects,
+        decision_trace=decision_trace,
+        classification_source=classification_source,
+        analysis_state=analysis_state,
+        failure_category=failure_category,
+        next_tag=next_tag,
+        notes=local_notes,
+        deterministic_label=deterministic_label,
+        court_skipped_reason=court_skipped_reason,
+    )
+    result = semantic_trace_artifacts.result
+    status = semantic_trace_artifacts.status
+    classification_source = semantic_trace_artifacts.classification_source
+    analysis_state = semantic_trace_artifacts.analysis_state
+    failure_category = semantic_trace_artifacts.failure_category
+    next_tag = semantic_trace_artifacts.next_tag
+    local_notes = semantic_trace_artifacts.notes
+    decision_trace = semantic_trace_artifacts.decision_trace
+    explainability_rows = semantic_trace_artifacts.explainability_rows
+    semantic_facts = semantic_trace_artifacts.semantic_facts
+    proof_obligations = semantic_trace_artifacts.proof_obligations
+    reasoning_trace = semantic_trace_artifacts.reasoning_trace
+    contradictions = semantic_trace_artifacts.contradictions
 
     output = orchestrator_finalize.build_output_payload(
         status=status,
