@@ -3,34 +3,34 @@ from __future__ import annotations
 import ast
 import configparser
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from bumpkin.analysis import finding_aggregation, finding_types
+from bumpkin.analysis import (
+    finding_aggregation,
+    finding_diff,
+    finding_types,
+    finding_workspace,
+)
 
 aggregate_findings = finding_aggregation.aggregate_findings
 AggregatedFindingResult = finding_types.AggregatedFindingResult
 CONFIDENCE_ORDER = finding_types.CONFIDENCE_ORDER
+DIFF_GIT_HEADER = finding_diff.DIFF_GIT_HEADER
 Finding = finding_types.Finding
 SEVERITY_ORDER = finding_types.SEVERITY_ORDER
+WorkspaceLoader = finding_workspace.WorkspaceLoader
+PYTHON_SOURCE_ROOT_NAMES = finding_workspace.PYTHON_SOURCE_ROOT_NAMES
+_FileDiff = finding_diff.FileDiff
+_parse_diff_files = finding_diff.parse_diff_files
+build_filesystem_workspace_loader = finding_workspace.build_filesystem_workspace_loader
+_read_workspace_python_lines = finding_workspace.read_workspace_python_lines
+_python_package_root = finding_workspace.python_package_root
+_python_module_candidates = finding_workspace.python_module_candidates
+_python_relative_module_from_ancestor = finding_workspace.python_relative_module_from_ancestor
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
 PYTHON_EXTENSIONS = (".py", ".pyi", ".pyw")
-PYTHON_SOURCE_ROOT_NAMES = {
-    "src",
-    "python",
-    "lib",
-    "package",
-    "packages",
-    "app",
-    "apps",
-    "service",
-    "services",
-    "backend",
-    "backends",
-}
-DIFF_GIT_HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 REQUIRES_PYTHON_PATTERN = re.compile(
     r"""^\s*requires-python\s*=\s*["']([^"']+)["']""",
     re.IGNORECASE,
@@ -77,17 +77,6 @@ PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
 PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
 PYTHON_TYPE_CHECKING_PATTERN = re.compile(r"^\s*if\s+(?:typing\.)?TYPE_CHECKING\s*:\s*$")
 
-
-@dataclass
-class _FileDiff:
-    path: str
-    removed_lines: list[str]
-    added_lines: list[str]
-    context_lines: list[str]
-    ordered_lines: list[tuple[str, str]]
-    touched_export_markers: bool
-
-
 @dataclass(frozen=True)
 class _FunctionSignature:
     name: str
@@ -111,10 +100,6 @@ class _PythonParameterSpec:
     kind: str
     required: bool
     annotation: str | None
-
-
-WorkspaceLoader = Callable[[str], list[str] | None]
-
 
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return (
@@ -326,167 +311,6 @@ def _allows_python_implicit_public_surface(
     if _is_python_api_surface(path):
         return bool(workspace_api_reexport_names) or not _is_obviously_internal_python_path(path)
     return not _is_obviously_internal_python_path(path)
-
-
-def build_filesystem_workspace_loader(
-    base_dir: str | Path | None = None,
-) -> WorkspaceLoader:
-    base_path = (Path(base_dir) if base_dir is not None else Path.cwd()).resolve(strict=False)
-
-    def _load(path: str) -> list[str] | None:
-        candidate = Path(path)
-        resolved = (
-            candidate.resolve(strict=False)
-            if candidate.is_absolute()
-            else (base_path / candidate).resolve(strict=False)
-        )
-        try:
-            resolved.relative_to(base_path)
-        except ValueError:
-            return None
-        try:
-            return resolved.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            return None
-
-    return _load
-
-
-def _read_workspace_python_lines(
-    path: str,
-    *,
-    workspace_loader: WorkspaceLoader | None,
-) -> list[str] | None:
-    if workspace_loader is None:
-        return None
-    return workspace_loader(path)
-
-
-def _python_package_root(path: str) -> str | None:
-    normalized = path.strip().replace("\\", "/").strip("/")
-    if not normalized:
-        return None
-    parts = normalized.split("/")
-    if len(parts) < 2:
-        return None
-    package_parts = parts[:-1]
-    if parts[0] in PYTHON_SOURCE_ROOT_NAMES and len(parts) >= 3:
-        package_parts = parts[1:-1]
-    if not package_parts:
-        return None
-    package_root = ".".join(package_parts)
-    return package_root or None
-
-
-def _python_module_candidates(path: str) -> set[str]:
-    normalized = path.strip().replace("\\", "/").strip("/")
-    if not normalized:
-        return set()
-    parts = normalized.split("/")
-    if not parts:
-        return set()
-    module_parts = [*parts[:-1], Path(parts[-1]).stem]
-    candidates = {".".join(module_parts)}
-    if module_parts and module_parts[0] in PYTHON_SOURCE_ROOT_NAMES and len(module_parts) >= 2:
-        candidates.add(".".join(module_parts[1:]))
-    return {candidate for candidate in candidates if candidate}
-
-
-def _python_relative_module_from_ancestor(path: Path, ancestor_dir: Path) -> str | None:
-    try:
-        relative = path.relative_to(ancestor_dir)
-    except ValueError:
-        return None
-    parts = relative.parts
-    if not parts:
-        return None
-    module_parts = [*parts[:-1], Path(parts[-1]).stem]
-    return ".".join(part for part in module_parts if part) or None
-
-
-def _parse_diff_files(diff_text: str) -> list[_FileDiff]:
-    file_diffs: list[_FileDiff] = []
-    current: _FileDiff | None = None
-    saw_header = False
-
-    for raw in diff_text.splitlines():
-        header = DIFF_GIT_HEADER.match(raw.strip())
-        if header:
-            saw_header = True
-            if current is not None:
-                file_diffs.append(current)
-            current = _FileDiff(
-                path=header.group(2),
-                removed_lines=[],
-                added_lines=[],
-                context_lines=[],
-                ordered_lines=[],
-                touched_export_markers=False,
-            )
-            continue
-
-        if current is None:
-            continue
-        if raw.startswith(("---", "+++", "@@", "index ")):
-            continue
-        if raw.startswith("-"):
-            line = raw[1:].rstrip()
-            if line.strip():
-                current.removed_lines.append(line)
-                current.ordered_lines.append(("-", line))
-                if "export " in line:
-                    current.touched_export_markers = True
-        elif raw.startswith("+"):
-            line = raw[1:].rstrip()
-            if line.strip():
-                current.added_lines.append(line)
-                current.ordered_lines.append(("+", line))
-                if "export " in line:
-                    current.touched_export_markers = True
-        elif raw.startswith(" "):
-            line = raw[1:].rstrip()
-            if line.strip():
-                current.context_lines.append(line)
-                current.ordered_lines.append((" ", line))
-
-    if current is not None:
-        file_diffs.append(current)
-
-    if saw_header:
-        return file_diffs
-
-    # Fallback for synthetic diffs without git headers.
-    removed: list[str] = []
-    added: list[str] = []
-    touched_export = False
-    for raw in diff_text.splitlines():
-        if raw.startswith(("---", "+++", "@@", "index ", "diff --git ")):
-            continue
-        if raw.startswith("-"):
-            line = raw[1:].rstrip()
-            if line.strip():
-                removed.append(line)
-                if "export " in line:
-                    touched_export = True
-        elif raw.startswith("+"):
-            line = raw[1:].rstrip()
-            if line.strip():
-                added.append(line)
-                if "export " in line:
-                    touched_export = True
-    if not removed and not added:
-        return []
-    return [
-        _FileDiff(
-            path="<unknown>.ts",
-            removed_lines=removed,
-            added_lines=added,
-            context_lines=[],
-            ordered_lines=[*[("-", line) for line in removed], *[("+", line) for line in added]],
-            touched_export_markers=touched_export,
-        )
-    ]
-
 
 def _extract_export_names(lines: list[str]) -> set[str]:
     exports: set[str] = set()
