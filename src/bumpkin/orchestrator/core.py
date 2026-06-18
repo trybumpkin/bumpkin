@@ -8,14 +8,13 @@ from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.evidence import build_evidence_items, summarize_evidence_items
 from bumpkin.analysis.findings import (
     Finding,
-    aggregate_findings,
     build_filesystem_workspace_loader,
     detect_semver_findings,
 )
 from bumpkin.analysis.impact import summarize_impact
 from bumpkin.config import BumpkinConfig
-from bumpkin.orchestrator import adjudication as orchestrator_adjudication
 from bumpkin.orchestrator import analysis_stage as orchestrator_analysis_stage
+from bumpkin.orchestrator import base_classification as orchestrator_base_classification
 from bumpkin.orchestrator import court_authority as orchestrator_court_authority
 from bumpkin.orchestrator import court_output as orchestrator_court_output
 from bumpkin.orchestrator import court_setup as orchestrator_court_setup
@@ -26,8 +25,6 @@ from bumpkin.orchestrator import postprocess as orchestrator_postprocess
 from bumpkin.planner import PlannerDecision
 from bumpkin.policies import engine as policy_engine
 from bumpkin.prompt_pack import PromptPackMetadata
-from bumpkin.providers.llm import get_no_bump_recommendation, get_stub_recommendation
-from bumpkin.providers.semantic import semantic_fallback_recommendation
 
 _polish_explanation_with_model = explanation_polish.polish_explanation_with_model
 _should_run_explanation_polish = explanation_polish.should_run_explanation_polish
@@ -167,10 +164,6 @@ def analyze_diff_core(
     if evidence_items:
         local_notes.append(f"Evidence extraction produced {len(evidence_items)} item(s).")
 
-    fallback_reason: str | None = None
-    mode_used = "deterministic-engine"
-    model_used: str | None = None
-    classification_source = "deterministic-engine"
     chunking_meta: dict[str, object] = {
         "enabled": bool(bumpkin_config.chunking_enabled),
         "chunk_count": 0,
@@ -186,47 +179,22 @@ def analyze_diff_core(
         "omitted_files": [],
         "omitted_files_sample": [],
     }
-    aggregation_trace: str | None = None
-
-    if scope_mismatch_detected:
-        result: dict[str, object] = {
-            "status": "manual_review",
-            "label": None,
-            "confidence": None,
-            "reasoning": "Analysis could not be reliably scoped to PR files.",
-            "changelog": None,
-        }
-        mode_used = "scope-guard"
-        model_used = "scope-guard"
-        fallback_reason = scope_mismatch_reason
-        classification_source = "scope-mismatch-guard"
-    elif diff_result.diff_text:
-        aggregated_findings = aggregate_findings(findings)
-        if mode.strip().lower() == "stub":
-            result = get_stub_recommendation(truncated=diff_result.truncated)
-            mode_used = "stub"
-            model_used = "stub"
-            classification_source = orchestrator_adjudication.source_from_mode(mode_used)
-        elif aggregated_findings is not None:
-            result = aggregated_findings.to_result_dict()
-            aggregation_trace = aggregated_findings.aggregation_trace
-            mode_used = "deterministic-findings"
-            classification_source = "deterministic-findings"
-            local_notes.append("Deterministic findings engine produced base classification.")
-        else:
-            result = semantic_fallback_recommendation(
-                diff_text=diff_result.diff_text,
-                surface_area_hints=local_public_hints,
-                truncated=diff_result.truncated,
-            )
-            mode_used = "deterministic-heuristic"
-            classification_source = "deterministic-heuristic"
-            local_notes.append("Deterministic semantic heuristic produced base classification.")
-    else:
-        result = get_no_bump_recommendation(truncated=diff_result.truncated)
-        mode_used = "deterministic-no-diff"
-        model_used = "heuristic"
-        classification_source = "deterministic-no-diff"
+    base_classification = orchestrator_base_classification.determine_base_classification(
+        diff_result=diff_result,
+        findings=findings,
+        mode=mode,
+        scope_mismatch_detected=scope_mismatch_detected,
+        scope_mismatch_reason=scope_mismatch_reason,
+        surface_area_hints=local_public_hints,
+        notes=local_notes,
+    )
+    result = base_classification.result
+    aggregation_trace = base_classification.aggregation_trace
+    fallback_reason = base_classification.fallback_reason
+    mode_used = base_classification.mode_used
+    model_used = base_classification.model_used
+    classification_source = base_classification.classification_source
+    local_notes = base_classification.notes
 
     analysis_stage = orchestrator_analysis_stage.apply_analysis_stage(
         result=result,
