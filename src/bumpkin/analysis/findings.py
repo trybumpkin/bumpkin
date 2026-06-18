@@ -31,13 +31,11 @@ def _reindex_findings(findings: list[Finding]) -> list[Finding]:
         replace(finding, id=f"{finding.rule}:{index}") for index, finding in enumerate(findings, 1)
     ]
 
-
 def _normalize_type(raw_type: str | None) -> str | None:
     if raw_type is None:
         return None
     cleaned = re.sub(r"\s+", " ", raw_type).strip()
     return cleaned or None
-
 
 def _build_finding(
     *,
