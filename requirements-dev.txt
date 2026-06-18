@@ -1,5 +1,5 @@
 -r requirements.txt
-psycopg[binary]>=3.2.0
+psycopg[binary]>=3.3.4
 ruff>=0.15.12
 deepeval>=0.21.0
 pytest>=8.0.0
