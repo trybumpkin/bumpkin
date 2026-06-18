@@ -77,6 +77,7 @@ PYTHON_PUBLIC_ASSIGNMENT_PATTERN = re.compile(
 PYTHON_IMPORT_START_PATTERN = re.compile(r"^\s*(?:from\b.+\bimport\b|import\b)")
 PYTHON_TYPE_CHECKING_PATTERN = re.compile(r"^\s*if\s+(?:typing\.)?TYPE_CHECKING\s*:\s*$")
 
+
 @dataclass(frozen=True)
 class _FunctionSignature:
     name: str
@@ -100,6 +101,7 @@ class _PythonParameterSpec:
     kind: str
     required: bool
     annotation: str | None
+
 
 def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
     return (
@@ -311,6 +313,7 @@ def _allows_python_implicit_public_surface(
     if _is_python_api_surface(path):
         return bool(workspace_api_reexport_names) or not _is_obviously_internal_python_path(path)
     return not _is_obviously_internal_python_path(path)
+
 
 def _extract_export_names(lines: list[str]) -> set[str]:
     exports: set[str] = set()
