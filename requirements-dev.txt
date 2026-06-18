@@ -1,6 +1,6 @@
 -r requirements.txt
 psycopg[binary]>=3.2.0
 ruff>=0.15.12
-deepeval>=0.21.0
+deepeval>=4.0.6
 pytest>=8.0.0
 pyright>=1.1.409
