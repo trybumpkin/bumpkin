@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 from bumpkin.analysis import semantic_review
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.evidence import build_evidence_items, summarize_evidence_items
 from bumpkin.analysis.findings import (
-    Finding,
     build_filesystem_workspace_loader,
     detect_semver_findings,
 )
@@ -21,47 +17,18 @@ from bumpkin.orchestrator import court_setup as orchestrator_court_setup
 from bumpkin.orchestrator import explainability as orchestrator_explainability
 from bumpkin.orchestrator import explanation_polish
 from bumpkin.orchestrator import finalize as orchestrator_finalize
+from bumpkin.orchestrator import output_assembly as orchestrator_output_assembly
 from bumpkin.orchestrator import postprocess as orchestrator_postprocess
 from bumpkin.planner import PlannerDecision
 from bumpkin.policies import engine as policy_engine
 from bumpkin.prompt_pack import PromptPackMetadata
 
+CoreAnalysisResult = orchestrator_output_assembly.CoreAnalysisResult
+
 _polish_explanation_with_model = explanation_polish.polish_explanation_with_model
 _should_run_explanation_polish = explanation_polish.should_run_explanation_polish
 _extract_polish_payload = explanation_polish.extract_polish_payload
 _validate_polish_payload = explanation_polish.validate_polish_payload
-
-
-@dataclass(frozen=True)
-class CoreAnalysisResult:
-    output: dict[str, Any]
-    result: dict[str, Any]
-    notes: list[str]
-    findings: list[Finding]
-    mode_used: str
-    fallback_reason: str | None
-    current_tag: str | None
-    next_tag: str | None
-    override_summary: str | None
-    override_status: str
-    aggregation_trace: str | None
-    boundary_summary: dict[str, int]
-    analysis_state: str
-    classification_source: str
-    failure_category: str | None
-    policy_effects: list[str]
-    decision_trace: dict[str, Any]
-    court_advisory: dict[str, Any]
-    court_fallback_reason: str | None
-    court_model_used: str | None
-    court_skipped_reason: str | None
-    deterministic_label: str | None
-    deterministic_next_tag: str | None
-    model_used: str | None
-    explainability_rows: list[dict[str, str]]
-    proof_obligations: dict[str, Any]
-    reasoning_trace: list[dict[str, Any]]
-    contradictions: list[dict[str, Any]]
 
 
 def _workspace_loader_for_diff_result(diff_result: DiffResult):
@@ -398,7 +365,7 @@ def analyze_diff_core(
     reasoning_trace = semantic_trace_artifacts.reasoning_trace
     contradictions = semantic_trace_artifacts.contradictions
 
-    output = orchestrator_finalize.build_output_payload(
+    return orchestrator_output_assembly.assemble_core_analysis_result(
         status=status,
         mode_used=mode_used,
         prompt_metadata=prompt_metadata,
@@ -432,7 +399,7 @@ def analyze_diff_core(
         evidence_summary_meta=evidence_summary_meta,
         case_file=case_file,
         case_file_stats=case_file_stats,
-        advisory=court_advisory,
+        court_advisory=court_advisory,
         decision_authority=decision_authority,
         deterministic_label=deterministic_label,
         deterministic_next_tag=deterministic_next_tag,
@@ -444,37 +411,9 @@ def analyze_diff_core(
         reasoning_trace=reasoning_trace,
         contradictions=contradictions,
         notes=local_notes,
-    )
-    output["court_skipped_reason"] = court_skipped_reason
-    output["court_fallback_reason"] = court_fallback_reason
-
-    return CoreAnalysisResult(
-        output=output,
-        result=result,
-        notes=local_notes,
-        findings=findings,
-        mode_used=mode_used,
-        fallback_reason=fallback_reason,
-        current_tag=current_tag,
-        next_tag=next_tag,
+        court_skipped_reason=court_skipped_reason,
+        court_fallback_reason=court_fallback_reason,
         override_summary=override_summary,
         override_status=override_status,
-        aggregation_trace=aggregation_trace,
-        boundary_summary=boundary_summary,
-        analysis_state=analysis_state,
-        classification_source=classification_source,
-        failure_category=failure_category,
-        policy_effects=policy_effects,
-        decision_trace=decision_trace,
-        court_advisory=court_advisory,
-        court_fallback_reason=court_fallback_reason,
         court_model_used=court_model_used,
-        court_skipped_reason=court_skipped_reason,
-        deterministic_label=deterministic_label,
-        deterministic_next_tag=deterministic_next_tag,
-        model_used=model_used,
-        explainability_rows=explainability_rows,
-        proof_obligations=proof_obligations,
-        reasoning_trace=reasoning_trace,
-        contradictions=contradictions,
     )
