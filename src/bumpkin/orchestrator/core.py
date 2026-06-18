@@ -14,8 +14,8 @@ from bumpkin.analysis.findings import (
 )
 from bumpkin.analysis.impact import summarize_impact
 from bumpkin.config import BumpkinConfig
-from bumpkin.contracts import build_coverage_contract
 from bumpkin.orchestrator import adjudication as orchestrator_adjudication
+from bumpkin.orchestrator import analysis_stage as orchestrator_analysis_stage
 from bumpkin.orchestrator import court_authority as orchestrator_court_authority
 from bumpkin.orchestrator import court_output as orchestrator_court_output
 from bumpkin.orchestrator import court_setup as orchestrator_court_setup
@@ -25,7 +25,6 @@ from bumpkin.orchestrator import finalize as orchestrator_finalize
 from bumpkin.orchestrator import postprocess as orchestrator_postprocess
 from bumpkin.planner import PlannerDecision
 from bumpkin.policies import engine as policy_engine
-from bumpkin.policies import guards as guard_policies
 from bumpkin.prompt_pack import PromptPackMetadata
 from bumpkin.providers.llm import get_no_bump_recommendation, get_stub_recommendation
 from bumpkin.providers.semantic import semantic_fallback_recommendation
@@ -116,7 +115,6 @@ _is_generic_court_summary = orchestrator_court_output.is_generic_court_summary
 _prefer_deterministic_explanation = orchestrator_court_output.prefer_deterministic_explanation
 _select_court_reasoning = orchestrator_court_output.select_court_reasoning
 _select_court_changelog = orchestrator_court_output.select_court_changelog
-_apply_docs_only_policy = orchestrator_court_output.apply_docs_only_policy
 _should_skip_court_advisory = orchestrator_court_output.should_skip_court_advisory
 _build_skipped_court_advisory = orchestrator_court_output.build_skipped_court_advisory
 
@@ -189,17 +187,6 @@ def analyze_diff_core(
         "omitted_files_sample": [],
     }
     aggregation_trace: str | None = None
-    boundary_summary = {"public": 0, "internal": 0, "unknown": 0}
-    coverage_contract: dict[str, object] = {
-        "version": "coverage_contract_v1",
-        "status": "pass",
-        "critical_files_total": 0,
-        "critical_files_covered": 0,
-        "omitted_critical_files": [],
-        "omitted_files_total": 0,
-    }
-    policy_actions: list[str] = []
-    coverage_guard_triggered = False
 
     if scope_mismatch_detected:
         result: dict[str, object] = {
@@ -241,173 +228,38 @@ def analyze_diff_core(
         model_used = "heuristic"
         classification_source = "deterministic-no-diff"
 
-    if not scope_mismatch_detected:
-        aggregated_findings = aggregate_findings(findings)
-        result, aggregation_trace, classification_source = (
-            orchestrator_adjudication.apply_findings_adjudication(
-                result,
-                aggregated_findings=aggregated_findings,
-                mode_used=mode_used,
-                notes=local_notes,
-            )
-        )
-        boundary_summary = policy_engine.summarize_boundary(
-            findings, public_hints=local_public_hints
-        )
-        result, coverage_guard_triggered = guard_policies.apply_analysis_coverage_guard(
-            result,
-            analyzed_files=diff_result.analyzed_files,
-            findings=findings,
-            chunking_meta=chunking_meta,
-            notes=local_notes,
-        )
-        if coverage_guard_triggered:
-            classification_source = "coverage-guard"
-
-    evidence_summary = policy_engine.summarize_evidence(
-        findings,
-        public_hints=local_public_hints,
-        contract_signals=behavior_contract_signals,
-    )
-    non_actionable_noise_ratio = 0.0
-    if diff_result.changed_files_total > 0:
-        non_actionable_noise_ratio = round(
-            diff_result.ignored_files_total / diff_result.changed_files_total,
-            4,
-        )
-
-    result, policy_mode_effects, policy_actions = policy_engine.apply_policy_mode(
-        result,
-        boundary_summary=boundary_summary,
-        config=bumpkin_config,
-        notes=local_notes,
-    )
-    result, unknown_boundary_effects, unknown_boundary_actions = (
-        policy_engine.apply_unknown_boundary_policy(
-            result,
-            boundary_summary=boundary_summary,
-            config=bumpkin_config,
-            notes=local_notes,
-        )
-    )
-    policy_actions.extend(unknown_boundary_actions)
-    result, impact_threshold_effects, impact_threshold_actions = (
-        policy_engine.apply_impact_evidence_threshold(
-            result,
-            boundary_summary=boundary_summary,
-            evidence_summary=evidence_summary,
-            config=bumpkin_config,
-            notes=local_notes,
-        )
-    )
-    policy_actions.extend(impact_threshold_actions)
-    result, noise_policy_effects, noise_policy_actions = (
-        policy_engine.apply_noise_suppression_policy(
-            result,
-            noise_ratio=non_actionable_noise_ratio,
-            changed_files_total=diff_result.changed_files_total,
-            evidence_summary=evidence_summary,
-            config=bumpkin_config,
-            notes=local_notes,
-        )
-    )
-    policy_actions.extend(noise_policy_actions)
-    if findings:
-        local_notes.append(
-            "Boundary summary: "
-            f"public={boundary_summary['public']}, "
-            f"internal={boundary_summary['internal']}, "
-            f"unknown={boundary_summary['unknown']}."
-        )
-
-    result, truncated_no_bump_guard_triggered = guard_policies.apply_truncated_no_bump_guard(
-        result,
-        truncated=diff_result.truncated,
-        analyzed_files=diff_result.analyzed_files,
-        policy=bumpkin_config.truncated_no_bump_policy,
-        notes=local_notes,
-    )
-    result, surface_area_guard_triggered = guard_policies.apply_truncated_surface_area_guard(
-        result,
-        truncated=diff_result.truncated,
-        analyzed_files=diff_result.analyzed_files,
-        surface_area_hints=local_public_hints,
-        chunking_meta=chunking_meta,
-        notes=local_notes,
-    )
-    result, large_pr_guard_triggered = guard_policies.apply_large_pr_no_bump_guard(
-        result,
-        analyzed_files_count=len(diff_result.analyzed_files),
-        approx_prompt_tokens=diff_result.approx_prompt_tokens,
-        max_files=bumpkin_config.large_pr_max_files,
-        max_tokens=bumpkin_config.large_pr_max_tokens,
-        policy=bumpkin_config.truncated_no_bump_policy,
-        notes=local_notes,
-    )
-
-    coverage_contract = build_coverage_contract(
-        analyzed_files=diff_result.analyzed_files,
-        chunking_meta=chunking_meta,
-        public_api_hints=local_public_hints,
+    analysis_stage = orchestrator_analysis_stage.apply_analysis_stage(
+        result=result,
+        findings=findings,
         behavior_contract_signals=behavior_contract_signals,
+        diff_result=diff_result,
+        bumpkin_config=bumpkin_config,
+        local_public_hints=local_public_hints,
+        chunking_meta=chunking_meta,
+        mode_used=mode_used,
+        fallback_reason=fallback_reason,
+        scope_mismatch_detected=scope_mismatch_detected,
+        notes=local_notes,
     )
-    if coverage_contract["status"] == "fail":
-        local_notes.append(
-            "Coverage contract failed: omitted critical files require manual review."
-        )
-        if str(result.get("status", "classified")) == "classified":
-            result = {
-                "status": "manual_review",
-                "label": None,
-                "confidence": None,
-                "reasoning": (
-                    "Critical coverage requirements were not met. "
-                    "Manual review is required before SemVer classification."
-                ),
-                "changelog": None,
-            }
-            classification_source = "coverage-contract"
-            coverage_guard_triggered = True
-
-    status_before_policy = str(result.get("status", "classified"))
-    label_before_policy = (
-        str(result.get("label", "")).upper() if status_before_policy == "classified" else None
-    )
-    policy_effects: list[str] = (
-        list(policy_mode_effects)
-        + list(unknown_boundary_effects)
-        + list(impact_threshold_effects)
-        + list(noise_policy_effects)
-    )
-    policy_effects.append(
-        policy_engine.derive_docs_only_policy_effect(
-            status=status_before_policy,
-            label=label_before_policy,
-            docs_only_label=bumpkin_config.docs_only_label,
-        )
-    )
-    result = _apply_docs_only_policy(result, bumpkin_config, local_notes)
-
-    result, degraded_policy_effects, degraded_policy_actions = (
-        policy_engine.apply_degraded_provider_policy(
-            result,
-            mode_used=mode_used,
-            classification_source=classification_source,
-            config=bumpkin_config,
-            notes=local_notes,
-        )
-    )
-    policy_actions.extend(degraded_policy_actions)
-    policy_effects.extend(degraded_policy_effects)
-
-    status = str(result.get("status", "classified"))
-    if status not in {"classified", "manual_review"}:
-        status = "manual_review"
-    analysis_state, classification_source = orchestrator_adjudication.derive_analysis_state(
-        status=status,
-        classification_source=classification_source,
-    )
-    failure_category = orchestrator_adjudication.categorize_failure_reason(fallback_reason)
+    result = analysis_stage.result
+    aggregation_trace = analysis_stage.aggregation_trace
+    boundary_summary = analysis_stage.boundary_summary
+    evidence_summary = analysis_stage.evidence_summary
+    non_actionable_noise_ratio = analysis_stage.non_actionable_noise_ratio
+    coverage_contract = analysis_stage.coverage_contract
+    coverage_guard_triggered = analysis_stage.coverage_guard_triggered
+    truncated_no_bump_guard_triggered = analysis_stage.truncated_no_bump_guard_triggered
+    surface_area_guard_triggered = analysis_stage.surface_area_guard_triggered
+    large_pr_guard_triggered = analysis_stage.large_pr_guard_triggered
+    status_before_policy = analysis_stage.status_before_policy
+    label_before_policy = analysis_stage.label_before_policy
+    policy_effects = analysis_stage.policy_effects
+    policy_actions = analysis_stage.policy_actions
+    status = analysis_stage.status
+    analysis_state = analysis_stage.analysis_state
+    classification_source = analysis_stage.classification_source
+    failure_category = analysis_stage.failure_category
+    local_notes = analysis_stage.notes
 
     if mode_used == "deterministic-findings":
         local_notes.append("Deterministic findings selected the base SemVer classification.")
