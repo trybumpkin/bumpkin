@@ -18,6 +18,7 @@ from bumpkin.config import BumpkinConfig
 from bumpkin.contracts import build_coverage_contract
 from bumpkin.orchestrator import adjudication as orchestrator_adjudication
 from bumpkin.orchestrator import court as orchestrator_court
+from bumpkin.orchestrator import court_authority as orchestrator_court_authority
 from bumpkin.orchestrator import court_output as orchestrator_court_output
 from bumpkin.orchestrator import explainability as orchestrator_explainability
 from bumpkin.orchestrator import explanation_polish
@@ -29,7 +30,6 @@ from bumpkin.policies import guards as guard_policies
 from bumpkin.prompt_pack import PromptPackMetadata
 from bumpkin.providers.llm import get_no_bump_recommendation, get_stub_recommendation
 from bumpkin.providers.semantic import semantic_fallback_recommendation
-from bumpkin.versioning.tags import detect_next_version
 
 _polish_explanation_with_model = explanation_polish.polish_explanation_with_model
 _should_run_explanation_polish = explanation_polish.should_run_explanation_polish
@@ -538,182 +538,40 @@ def analyze_diff_core(
             local_notes.append(reason)
 
     decision_authority = bumpkin_config.decision_authority_mode
-    if decision_authority == "court":
-        advisory_status = str(court_advisory.get("status", "")).strip().lower()
-        advisory_label = str(court_advisory.get("label", "")).strip().upper()
-        if advisory_status in {"aligned", "manual_review"} and advisory_label in {
-            "MAJOR",
-            "MINOR",
-            "PATCH",
-            "NO_BUMP",
-        }:
-            evidence_lookup = _case_file_evidence_lookup(case_file)
-            using_accepted_evidence_ids = _uses_accepted_evidence_ids(
-                court_advisory=court_advisory,
-                evidence_lookup=evidence_lookup,
-            )
-            selected_records = _select_explanation_records(
-                advisory_label=advisory_label,
-                court_advisory=court_advisory,
-                evidence_lookup=evidence_lookup,
-                max_items=3,
-            )
-            selected_reasoning, used_evidence_reasoning = _render_evidence_grounded_reasoning(
-                advisory_label=advisory_label,
-                court_advisory=court_advisory,
-                evidence_lookup=evidence_lookup,
-            )
-            selected_changelog, used_evidence_changelog = _render_evidence_grounded_changelog(
-                advisory_label=advisory_label,
-                court_advisory=court_advisory,
-                evidence_lookup=evidence_lookup,
-            )
-            used_deterministic_reasoning = False
-            used_deterministic_changelog = False
-            if not selected_reasoning:
-                selected_reasoning, used_deterministic_reasoning = _select_court_reasoning(
-                    court_advisory=court_advisory,
-                    advisory_label=advisory_label,
-                    pre_court_result=pre_court_result,
-                )
-            if not selected_changelog:
-                selected_changelog, used_deterministic_changelog = _select_court_changelog(
-                    advisory_label=advisory_label,
-                    court_advisory=court_advisory,
-                    pre_court_result=pre_court_result,
-                )
-            polish_applied = False
-            polish_failure_reason: str | None = None
-            confidence_text = str(court_advisory.get("confidence", "low")).strip().lower() or "low"
-            if _should_run_explanation_polish(
-                reasoning=selected_reasoning,
-                changelog=selected_changelog,
-                confidence=confidence_text,
-                token=advisory_token,
-            ):
-                polish_reasoning, polish_changelog, polish_applied, polish_failure_reason = (
-                    _polish_explanation_with_model(
-                        advisory_label=advisory_label,
-                        draft_reasoning=selected_reasoning,
-                        draft_changelog=selected_changelog,
-                        records=selected_records,
-                        token=advisory_token,
-                        endpoint=endpoint,
-                        model=court_model_used or model,
-                        max_retries=max_retries,
-                        request_timeout=request_timeout,
-                    )
-                )
-                selected_reasoning = polish_reasoning
-                selected_changelog = polish_changelog
-            explicit_regenerated = False
-            selected_reasoning, selected_changelog, explicit_regenerated = (
-                _enforce_explicit_explanation(
-                    advisory_label=advisory_label,
-                    reasoning=selected_reasoning,
-                    changelog=selected_changelog,
-                    records=selected_records,
-                    fallback_paths=diff_result.analyzed_files,
-                )
-            )
-            result = {
-                "status": "classified",
-                "label": advisory_label,
-                "confidence": confidence_text,
-                "reasoning": selected_reasoning,
-                "changelog": selected_changelog,
-            }
-            status = "classified"
-            classification_source = "court"
-            analysis_state = "authoritative"
-            failure_category = None
-            if used_deterministic_reasoning:
-                local_notes.append(
-                    "Court authority reused deterministic reasoning because court explanation was generic or low-confidence."
-                )
-            elif used_evidence_reasoning:
-                if using_accepted_evidence_ids:
-                    local_notes.append(
-                        "Court authority generated reasoning from accepted evidence IDs."
-                    )
-                else:
-                    local_notes.append(
-                        "Court authority generated reasoning from deterministic evidence fallback records."
-                    )
-            if used_deterministic_changelog:
-                local_notes.append(
-                    "Court authority reused deterministic changelog because court explanation was generic or low-confidence."
-                )
-            elif used_evidence_changelog:
-                if using_accepted_evidence_ids:
-                    local_notes.append(
-                        "Court authority generated changelog from accepted evidence IDs."
-                    )
-                else:
-                    local_notes.append(
-                        "Court authority generated changelog from deterministic evidence fallback records."
-                    )
-            if polish_applied:
-                local_notes.append("Applied low-token explanation polish pass for readability.")
-            elif polish_failure_reason:
-                local_notes.append(
-                    f"Explanation polish skipped/failed; kept deterministic wording ({polish_failure_reason})."
-                )
-            if explicit_regenerated:
-                local_notes.append(
-                    "Explicitness gate regenerated reasoning/changelog to include concrete file anchors and action verbs."
-                )
-            if advisory_label != deterministic_label:
-                local_notes.append(
-                    f"Court authority applied: deterministic {deterministic_label} -> court {advisory_label}."
-                )
-            if advisory_label != "NO_BUMP":
-                current_tag, next_tag, court_version_notes = detect_next_version(
-                    advisory_label,
-                    pre_1_0_breaking_as_minor=bumpkin_config.pre_1_0_breaking_as_minor,
-                )
-                local_notes.extend(court_version_notes)
-            else:
-                next_tag = None
-        elif advisory_status in {"degraded", "skipped"} and pre_court_status == "classified":
-            result = pre_court_result
-            status = "classified"
-            classification_source = "deterministic-court-fallback"
-            analysis_state = (
-                "degraded_fallback" if advisory_status == "degraded" else "authoritative"
-            )
-            if advisory_status == "degraded":
-                failure_category = (
-                    orchestrator_adjudication.categorize_failure_reason(court_fallback_reason)
-                    or failure_category
-                )
-            next_tag = deterministic_next_tag
-            if advisory_status == "degraded":
-                local_notes.append(
-                    "Court authority degraded; using pre-court deterministic classification as fallback."
-                )
-            else:
-                local_notes.append(
-                    "Court authority skipped; using pre-court deterministic classification."
-                )
-        else:
-            result = {
-                "status": "manual_review",
-                "label": None,
-                "confidence": None,
-                "reasoning": (
-                    "Compatibility court is configured as final authority, but no reliable court verdict "
-                    "was available. Manual review is required."
-                ),
-                "changelog": None,
-            }
-            status = "manual_review"
-            classification_source = "court-unavailable"
-            analysis_state = "manual_review"
-            next_tag = None
-            local_notes.append(
-                "Court authority mode forced manual review because advisory status was not authoritative."
-            )
+    court_authority_artifacts = orchestrator_court_authority.apply_court_authority(
+        decision_authority=decision_authority,
+        court_advisory=court_advisory,
+        case_file=case_file,
+        pre_court_result=pre_court_result,
+        pre_court_status=pre_court_status,
+        deterministic_label=deterministic_label,
+        deterministic_next_tag=deterministic_next_tag,
+        court_fallback_reason=court_fallback_reason,
+        court_model_used=court_model_used,
+        advisory_token=advisory_token,
+        endpoint=endpoint,
+        model=model,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+        diff_result=diff_result,
+        pre_1_0_breaking_as_minor=bumpkin_config.pre_1_0_breaking_as_minor,
+        result=result,
+        status=status,
+        classification_source=classification_source,
+        analysis_state=analysis_state,
+        failure_category=failure_category,
+        current_tag=current_tag,
+        next_tag=next_tag,
+        notes=local_notes,
+    )
+    result = court_authority_artifacts.result
+    status = court_authority_artifacts.status
+    classification_source = court_authority_artifacts.classification_source
+    analysis_state = court_authority_artifacts.analysis_state
+    failure_category = court_authority_artifacts.failure_category
+    current_tag = court_authority_artifacts.current_tag
+    next_tag = court_authority_artifacts.next_tag
+    local_notes = court_authority_artifacts.notes
 
     decision_trace["decision_authority"] = decision_authority
     decision_trace["deterministic_label"] = deterministic_label
