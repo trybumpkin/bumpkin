@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from dataclasses import dataclass
 from datetime import UTC, datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 try:
     import psycopg
@@ -20,9 +19,19 @@ if TYPE_CHECKING:
 
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.ingress import AppEventEnvelope
+from bumpkin.integrations.github.persistence_models import (
+    AuditLogRecord,
+    PublishDecisionRecord,
+    RecommendationSnapshot,
+    ReleaseBacklogItem,
+    StoredEventRecord,
+)
+from bumpkin.integrations.github.persistence_protocols import (
+    DEFAULT_EVENT_STATUS,
+    AppStateStore,
+)
 from bumpkin.integrations.github.types import AppEvent
 
-DEFAULT_EVENT_STATUS = "accepted"
 _PROPOSED_BUMP_RE = re.compile(r"(?im)^proposed bump \(court\):\s*(?P<label>[A-Z_]+)")
 _RECOMMENDATION_LINE_RE = re.compile(
     r"(?im)^recommendation\s*:\s*[^\n\rA-Z]*(?P<label>NO[\s_-]?BUMP|MAJOR|MINOR|PATCH)\b"
@@ -426,193 +435,6 @@ def apply_postgres_migrations(connection: PsycopgConnection[Any]) -> None:
         column_definition="release_summary TEXT",
     )
     connection.commit()
-
-
-@dataclass(frozen=True, slots=True)
-class StoredEventRecord:
-    provider: str
-    provider_event_id: str
-    event_type: str
-    action: str | None
-    repository: str | None
-    pull_request_number: int | None
-    sender_login: str | None
-    received_at: datetime
-    payload: dict[str, Any]
-    payload_hash: str
-    headers_hash: str
-    status: str
-
-
-@dataclass(frozen=True, slots=True)
-class PublishDecisionRecord:
-    repository: str
-    pull_request_number: int
-    commit_sha: str
-    allowed: bool
-    reason: str
-    guard_reasons: tuple[str, ...]
-    evaluated_at: datetime
-    policy_snapshot: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class AuditLogRecord:
-    entity_type: str
-    entity_id: str
-    action: str
-    actor: str
-    timestamp: datetime
-    details: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class RecommendationSnapshot:
-    label: str
-    current_version: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ReleaseBacklogItem:
-    id: int
-    repository: str
-    pull_request_number: int
-    merge_commit_sha: str
-    recommended_label: str
-    recommended_current_version: str | None
-    merged_at: datetime
-    included_in_release_tag: str | None
-    included_at: datetime | None
-    source_event_id: str | None = None
-    pull_request_title: str | None = None
-    pull_request_author_login: str | None = None
-    pull_request_url: str | None = None
-    release_summary: str | None = None
-
-
-class AppStateStore(Protocol):
-    def close(self) -> None: ...
-
-    def record_event(
-        self,
-        *,
-        envelope: AppEventEnvelope,
-        event: AppEvent,
-        status: str = DEFAULT_EVENT_STATUS,
-    ) -> bool: ...
-
-    def get_event(self, *, provider: str, provider_event_id: str) -> StoredEventRecord | None: ...
-
-    def update_event_status(
-        self,
-        *,
-        provider: str,
-        provider_event_id: str,
-        status: str,
-    ) -> bool: ...
-
-    def list_deferred_merge_events(
-        self,
-        *,
-        provider: str,
-        repository: str,
-        limit: int = 20,
-    ) -> list[StoredEventRecord]: ...
-
-    def latest_recommended_label_for_pr(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-    ) -> str | None: ...
-
-    def latest_recommendation_for_pr(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-    ) -> RecommendationSnapshot | None: ...
-
-    def record_recommendation_snapshot(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-        label: str,
-        current_version: str | None,
-        source: str,
-        source_event_id: str | None = None,
-        recorded_at: datetime | None = None,
-    ) -> None: ...
-
-    def upsert_release_backlog_item(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-        merge_commit_sha: str,
-        recommended_label: str,
-        recommended_current_version: str | None,
-        pull_request_title: str | None = None,
-        pull_request_author_login: str | None = None,
-        pull_request_url: str | None = None,
-        release_summary: str | None = None,
-        source_event_id: str | None = None,
-        merged_at: datetime | None = None,
-    ) -> int: ...
-
-    def list_unreleased_release_backlog_items(
-        self,
-        *,
-        repository: str,
-        limit: int = 500,
-    ) -> list[ReleaseBacklogItem]: ...
-
-    def mark_release_backlog_items_included(
-        self,
-        *,
-        repository: str,
-        backlog_ids: tuple[int, ...],
-        release_tag: str,
-        included_at: datetime | None = None,
-    ) -> int: ...
-
-    def record_approval(
-        self,
-        *,
-        approval: ApprovalRecord,
-        commit_sha: str,
-        source_event_id: str | None = None,
-    ) -> int: ...
-
-    def latest_approval_for_pr(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-    ) -> ApprovalRecord | None: ...
-
-    def delete_approvals(self, *, repository: str, pull_request_number: int) -> int: ...
-
-    def record_publish_decision(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-        commit_sha: str,
-        decision: PublishGuardDecision,
-        policy_snapshot: dict[str, Any],
-        evaluated_at: datetime | None = None,
-    ) -> int: ...
-
-    def latest_publish_decision_for_pr(
-        self,
-        *,
-        repository: str,
-        pull_request_number: int,
-    ) -> PublishDecisionRecord | None: ...
-
-    def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]: ...
 
 
 def _postgres_row_mapping(row: object) -> dict[str, Any]:
