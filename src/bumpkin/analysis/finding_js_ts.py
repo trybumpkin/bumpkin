@@ -77,7 +77,9 @@ def match_export_renames(
             if not new_sigs:
                 continue
             equivalent = any(
-                _signatures_equivalent(cast("SignatureLike", old_sig), cast("SignatureLike", new_sig))
+                _signatures_equivalent(
+                    cast("SignatureLike", old_sig), cast("SignatureLike", new_sig)
+                )
                 for old_sig in old_sigs
                 for new_sig in new_sigs
             )
