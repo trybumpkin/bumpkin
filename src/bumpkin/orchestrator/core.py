@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from bumpkin.analysis import semantic_review
-from bumpkin.analysis.case_file import build_case_file, render_case_file_text
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.evidence import build_evidence_items, summarize_evidence_items
 from bumpkin.analysis.findings import (
@@ -17,9 +16,9 @@ from bumpkin.analysis.impact import summarize_impact
 from bumpkin.config import BumpkinConfig
 from bumpkin.contracts import build_coverage_contract
 from bumpkin.orchestrator import adjudication as orchestrator_adjudication
-from bumpkin.orchestrator import court as orchestrator_court
 from bumpkin.orchestrator import court_authority as orchestrator_court_authority
 from bumpkin.orchestrator import court_output as orchestrator_court_output
+from bumpkin.orchestrator import court_setup as orchestrator_court_setup
 from bumpkin.orchestrator import explainability as orchestrator_explainability
 from bumpkin.orchestrator import explanation_polish
 from bumpkin.orchestrator import finalize as orchestrator_finalize
@@ -474,8 +473,8 @@ def analyze_diff_core(
     next_tag = finalization.next_tag
     decision_trace = finalization.decision_trace
 
-    case_file_build = build_case_file(
-        engine_result=result,
+    court_setup_artifacts = orchestrator_court_setup.prepare_court_setup(
+        result=result,
         findings=findings,
         evidence_items=evidence_items,
         policy_effects=policy_effects,
@@ -483,59 +482,31 @@ def analyze_diff_core(
         coverage_contract=coverage_contract,
         boundary_summary=boundary_summary,
         evidence_summary=evidence_summary,
-    )
-    case_file = case_file_build.case_file
-    case_file_stats = case_file_build.stats
-    pre_court_result = dict(result)
-    pre_court_status = str(pre_court_result.get("status", "manual_review"))
-    deterministic_label = (
-        str(pre_court_result.get("label", "")).upper() if pre_court_status == "classified" else None
-    )
-    deterministic_confidence = str(pre_court_result.get("confidence", "")).strip().lower() or None
-    deterministic_next_tag = next_tag if pre_court_status == "classified" else None
-    advisory_token = token if planner_decision.allow_model_call else ""
-
-    should_skip_court, court_skipped_reason = _should_skip_court_advisory(
-        status=pre_court_status,
-        deterministic_label=deterministic_label,
-        deterministic_confidence=deterministic_confidence,
-        mode_used=mode_used,
+        allow_model_call=planner_decision.allow_model_call,
+        token=token,
+        mode=mode,
+        model=model,
+        fallback_model=fallback_model,
+        endpoint=endpoint,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+        language_hints=language_hints,
         classification_source=classification_source,
+        mode_used=mode_used,
+        next_tag=next_tag,
     )
-    if should_skip_court and court_skipped_reason:
-        court_advisory = _build_skipped_court_advisory(
-            deterministic_label=deterministic_label,
-            deterministic_confidence=deterministic_confidence,
-            court_skipped_reason=court_skipped_reason,
-        )
-        court_fallback_reason = None
-        court_model_used = None
-        local_notes.append(f"Court advisory skipped: {court_skipped_reason}.")
-    else:
-        court_skipped_reason = None
-        court_advisory, court_fallback_reason, court_model_used = (
-            orchestrator_court.run_court_advisory(
-                mode=mode,
-                model=model,
-                fallback_model=fallback_model or None,
-                endpoint=endpoint,
-                token=advisory_token,
-                max_retries=max_retries,
-                request_timeout=request_timeout,
-                engine_label=deterministic_label,
-                case_file_text=render_case_file_text(case_file),
-                language_hints=language_hints,
-            )
-        )
-
-    if court_model_used:
-        local_notes.append(f"Compatibility court analyzed by model: {court_model_used}.")
-    if court_fallback_reason:
-        local_notes.append(f"Compatibility court advisory degraded: {court_fallback_reason}.")
-    if str(court_advisory.get("status", "")).lower() == "manual_review":
-        reason = str(court_advisory.get("disagreement_reason", "")).strip()
-        if reason:
-            local_notes.append(reason)
+    case_file = court_setup_artifacts.case_file
+    case_file_stats = court_setup_artifacts.case_file_stats
+    pre_court_result = court_setup_artifacts.pre_court_result
+    pre_court_status = court_setup_artifacts.pre_court_status
+    deterministic_label = court_setup_artifacts.deterministic_label
+    deterministic_next_tag = court_setup_artifacts.deterministic_next_tag
+    advisory_token = court_setup_artifacts.advisory_token
+    court_advisory = court_setup_artifacts.court_advisory
+    court_fallback_reason = court_setup_artifacts.court_fallback_reason
+    court_model_used = court_setup_artifacts.court_model_used
+    court_skipped_reason = court_setup_artifacts.court_skipped_reason
+    local_notes = court_setup_artifacts.notes
 
     decision_authority = bumpkin_config.decision_authority_mode
     court_authority_artifacts = orchestrator_court_authority.apply_court_authority(
