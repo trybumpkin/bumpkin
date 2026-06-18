@@ -3,12 +3,14 @@ from __future__ import annotations
 import ast
 import configparser
 import re
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from bumpkin.analysis import (
     finding_aggregation,
     finding_diff,
     finding_js_ts,
+    finding_python_parameter_compat,
+    finding_python_signatures,
     finding_python_surface,
     finding_types,
     finding_workspace,
@@ -75,6 +77,56 @@ _split_top_level_params = finding_python_surface.split_top_level_params
 _strip_python_inline_comment = finding_python_surface.strip_python_inline_comment
 _workspace_python_all_contract = finding_python_surface.workspace_python_all_contract
 _workspace_python_api_reexport_names = finding_python_surface.workspace_python_api_reexport_names
+_FunctionSignature = finding_python_signatures.PythonFunctionSignature
+_PythonParameterSpec = finding_python_parameter_compat.PythonParameterSpec
+_signature_key = finding_python_signatures.signature_key
+_signatures_equivalent = finding_python_signatures.signatures_equivalent
+_python_symbol_roots = finding_python_signatures.python_symbol_roots
+_python_class_scope_is_public = finding_python_signatures.python_class_scope_is_public
+_python_public_class_path = finding_python_signatures.python_public_class_path
+_is_public_python_member_symbol = finding_python_signatures.is_public_python_member_symbol
+_match_python_member_renames = finding_python_signatures.match_python_member_renames
+_python_statement_anchor = finding_python_signatures.python_statement_anchor
+_infer_python_constructor_class_from_workspace = (
+    finding_python_signatures.infer_python_constructor_class_from_workspace
+)
+_infer_python_member_class_from_workspace = (
+    finding_python_signatures.infer_python_member_class_from_workspace
+)
+_has_ambiguous_python_constructor_match = (
+    finding_python_signatures.has_ambiguous_python_constructor_match
+)
+_classify_nested_python_constructor_context = (
+    finding_python_signatures.classify_nested_python_constructor_context
+)
+_classify_nested_python_constructor_context_from_hunk = (
+    finding_python_signatures.classify_nested_python_constructor_context_from_hunk
+)
+_iter_python_version_lines = finding_python_signatures.iter_python_version_lines
+_collect_python_signature_block = finding_python_signatures.collect_python_signature_block
+_collect_python_decorator_names = finding_python_signatures.collect_python_decorator_names
+_python_method_kind_from_decorators = finding_python_signatures.python_method_kind_from_decorators
+_is_public_python_member_name = finding_python_signatures.is_public_python_member_name
+_extract_python_signatures = finding_python_signatures.extract_python_signatures
+_extract_python_classes = finding_python_signatures.extract_python_classes
+_is_optional_param = finding_python_parameter_compat.is_optional_param
+_normalize_python_annotation = finding_python_parameter_compat.normalize_python_annotation
+_parse_python_parameter_specs = finding_python_parameter_compat.parse_python_parameter_specs
+_same_python_parameter_surface = finding_python_parameter_compat.same_python_parameter_surface
+_is_python_parameter_name_compatible = (
+    finding_python_parameter_compat.is_python_parameter_name_compatible
+)
+_is_python_parameter_kind_compatible = (
+    finding_python_parameter_compat.is_python_parameter_kind_compatible
+)
+_is_python_parameter_surface_compatible = (
+    finding_python_parameter_compat.is_python_parameter_surface_compatible
+)
+_has_compatible_python_parameter_surface = (
+    finding_python_parameter_compat.has_compatible_python_parameter_surface
+)
+_is_optional_widening = finding_python_parameter_compat.is_optional_widening
+_is_requiredness_tightening = finding_python_parameter_compat.is_requiredness_tightening
 
 JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
 PYTHON_EXTENSIONS = (".py", ".pyi", ".pyw")
@@ -96,125 +148,10 @@ POETRY_PYTHON_PATTERN = re.compile(
 )
 
 
-@dataclass(frozen=True)
-class _FunctionSignature:
-    name: str
-    params: str
-    return_type: str | None
-    is_async: bool
-    source: str
-    method_kind: str | None = None
-
-
-@dataclass(frozen=True)
-class _PythonParameterSpec:
-    name: str
-    kind: str
-    required: bool
-    annotation: str | None
-
-
-def _signatures_equivalent(left: _FunctionSignature, right: _FunctionSignature) -> bool:
-    return (
-        left.params == right.params
-        and left.return_type == right.return_type
-        and left.is_async == right.is_async
-        and left.method_kind == right.method_kind
-    )
-
-
-def _signature_key(signature: _FunctionSignature) -> tuple[str, str | None, str, str | None]:
-    return (
-        signature.params,
-        signature.return_type,
-        "async" if signature.is_async else "sync",
-        signature.method_kind,
-    )
-
-
-def _python_symbol_roots(symbol: str) -> tuple[str, str]:
-    if "." not in symbol:
-        return symbol, symbol
-    root_class = symbol.split(".", 1)[0]
-    container = symbol.rsplit(".", 1)[0]
-    return root_class, container
-
-
-def _python_class_scope_is_public(scope_stack: list[tuple[str, int, str | None]]) -> bool:
-    class_entries = [entry for entry in scope_stack if entry[0] == "class"]
-    return all(entry[2] is not None for entry in class_entries)
-
-
-def _python_public_class_path(scope_stack: list[tuple[str, int, str | None]]) -> list[str] | None:
-    class_entries = [entry[2] for entry in scope_stack if entry[0] == "class"]
-    if not class_entries:
-        return []
-    if any(entry is None for entry in class_entries):
-        return None
-    return [entry for entry in class_entries if entry is not None]
-
-
-def _is_public_python_member_symbol(
-    symbol: str,
-    *,
-    public_exports: set[str],
-    public_classes: set[str],
-) -> bool:
-    if symbol in public_exports:
-        return True
-    if "." not in symbol:
-        return False
-    root_class, container = _python_symbol_roots(symbol)
-    return (
-        container in public_exports
-        or container in public_classes
-        or root_class in public_exports
-        or root_class in public_classes
-    )
-
-
 def _reindex_findings(findings: list[Finding]) -> list[Finding]:
     return [
         replace(finding, id=f"{finding.rule}:{index}") for index, finding in enumerate(findings, 1)
     ]
-
-
-def _match_python_member_renames(
-    *,
-    removed_symbols: list[str],
-    added_symbols: list[str],
-    removed_signatures: dict[str, list[_FunctionSignature]],
-    added_signatures: dict[str, list[_FunctionSignature]],
-) -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
-    used_added: set[str] = set()
-    for old_symbol in removed_symbols:
-        if "." not in old_symbol:
-            continue
-        old_root, old_container = _python_symbol_roots(old_symbol)
-        old_sigs = removed_signatures.get(old_symbol, [])
-        if not old_sigs:
-            continue
-        for new_symbol in added_symbols:
-            if new_symbol in used_added or "." not in new_symbol:
-                continue
-            new_root, new_container = _python_symbol_roots(new_symbol)
-            if old_root != new_root or old_container != new_container:
-                continue
-            new_sigs = added_signatures.get(new_symbol, [])
-            if not new_sigs:
-                continue
-            equivalent = any(
-                _signatures_equivalent(old_sig, new_sig)
-                for old_sig in old_sigs
-                for new_sig in new_sigs
-            )
-            if not equivalent:
-                continue
-            pairs.append((old_symbol, new_symbol))
-            used_added.add(new_symbol)
-            break
-    return pairs
 
 
 def _is_python_path(path: str) -> bool:
@@ -249,515 +186,6 @@ def _iter_python_version_source_lines(
     target_prefix: str,
 ) -> list[str]:
     return [line for prefix, line in file_diff.ordered_lines if prefix in {" ", target_prefix}]
-
-
-def _python_statement_anchor(line: str | None) -> str | None:
-    if line is None:
-        return None
-    stripped = line.strip()
-    if not stripped:
-        return None
-    if "=" in stripped:
-        left, right = stripped.split("=", 1)
-        if left.strip() and not right.startswith("="):
-            return left.strip()
-    return stripped
-
-
-def _infer_python_constructor_class_from_workspace(
-    path: str,
-    *,
-    body_anchor: str | None,
-    workspace_loader: WorkspaceLoader | None,
-) -> str | None:
-    class_path = _infer_python_member_class_from_workspace(
-        path,
-        member_name="__init__",
-        body_anchor=body_anchor,
-        workspace_loader=workspace_loader,
-    )
-    if class_path is None or "." in class_path:
-        return None
-    return class_path
-
-
-def _infer_python_member_class_from_workspace(
-    path: str,
-    *,
-    member_name: str,
-    body_anchor: str | None,
-    workspace_loader: WorkspaceLoader | None,
-) -> str | None:
-    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
-    if lines is None:
-        return None
-
-    candidates: list[str] = []
-    scope_stack: list[tuple[str, int, str | None]] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        indent = _python_indent_level(line)
-        if line.strip():
-            while scope_stack and indent <= scope_stack[-1][1]:
-                scope_stack.pop()
-
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if class_match and not line.lstrip().startswith("@"):
-            class_name = class_match.group(1)
-            scope_stack.append(
-                ("class", indent, class_name if not class_name.startswith("_") else None)
-            )
-            index += 1
-            continue
-
-        def_start = PYTHON_DEF_START_PATTERN.search(line)
-        if not def_start:
-            index += 1
-            continue
-
-        signature_source, next_index = _collect_python_signature_source(lines, index)
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if def_match and def_match.group(1) == member_name and _python_indent_level(line) > 0:
-            next_body_line: str | None = None
-            if next_index < len(lines):
-                candidate = lines[next_index].strip()
-                if candidate:
-                    next_body_line = candidate
-            if not _python_class_scope_is_public(scope_stack):
-                if def_match:
-                    scope_stack.append(("def", indent, None))
-                index = next_index
-                continue
-            public_class_path = _python_public_class_path(scope_stack)
-            has_function_scope = any(entry[0] == "def" for entry in scope_stack)
-            if (
-                public_class_path
-                and not has_function_scope
-                and (
-                    body_anchor is None
-                    or _python_statement_anchor(next_body_line)
-                    == _python_statement_anchor(body_anchor)
-                )
-            ):
-                candidates.append(".".join(public_class_path))
-        if def_match:
-            scope_stack.append(("def", indent, None))
-        index = next_index
-
-    unique_candidates = sorted(set(candidates))
-    if len(unique_candidates) == 1:
-        return unique_candidates[0]
-    return None
-
-
-def _has_ambiguous_python_constructor_match(
-    path: str,
-    *,
-    body_anchor: str | None,
-    workspace_loader: WorkspaceLoader | None,
-) -> bool:
-    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
-    if lines is None:
-        return False
-
-    candidates: list[str] = []
-    current_top_level_class: str | None = None
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        is_top_level = _is_python_top_level_statement(line)
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line) if is_top_level else None
-        if class_match and not line.lstrip().startswith("@"):
-            class_name = class_match.group(1)
-            current_top_level_class = class_name if not class_name.startswith("_") else None
-            index += 1
-            continue
-        if is_top_level and not class_match and line.strip():
-            current_top_level_class = None
-
-        def_start = PYTHON_DEF_START_PATTERN.search(line)
-        if not def_start:
-            index += 1
-            continue
-
-        signature_source, next_index = _collect_python_signature_source(lines, index)
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if (
-            current_top_level_class
-            and def_match
-            and def_match.group(1) == "__init__"
-            and _python_indent_level(line) > 0
-        ):
-            next_body_line: str | None = None
-            if next_index < len(lines):
-                candidate = lines[next_index].strip()
-                if candidate:
-                    next_body_line = candidate
-            if body_anchor is None or _python_statement_anchor(
-                next_body_line
-            ) == _python_statement_anchor(body_anchor):
-                candidates.append(current_top_level_class)
-        index = next_index
-
-    return len(set(candidates)) > 1
-
-
-def _classify_nested_python_constructor_context(
-    path: str,
-    *,
-    body_anchor: str | None,
-    workspace_loader: WorkspaceLoader | None,
-) -> str:
-    lines = _read_workspace_python_lines(path, workspace_loader=workspace_loader)
-    if lines is None:
-        return "unknown"
-
-    stack: list[tuple[str, int, str | None]] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        indent = _python_indent_level(line)
-        if line.strip():
-            while stack and indent <= stack[-1][1]:
-                stack.pop()
-
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if class_match and not line.lstrip().startswith("@"):
-            class_name = class_match.group(1)
-            stack.append(("class", indent, class_name if not class_name.startswith("_") else None))
-            index += 1
-            continue
-
-        def_start = PYTHON_DEF_START_PATTERN.search(line)
-        if not def_start:
-            index += 1
-            continue
-
-        signature_source, next_index = _collect_python_signature_source(lines, index)
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if def_match and def_match.group(1) == "__init__":
-            next_body_line: str | None = None
-            if next_index < len(lines):
-                candidate = lines[next_index].strip()
-                if candidate:
-                    next_body_line = candidate
-            if body_anchor is None or _python_statement_anchor(
-                next_body_line
-            ) == _python_statement_anchor(body_anchor):
-                public_class_path = _python_public_class_path(stack)
-                has_function_scope = any(entry[0] == "def" for entry in stack)
-                if has_function_scope:
-                    return "nonpublic"
-                if public_class_path is None:
-                    return "nonpublic"
-                if len(public_class_path) > 1:
-                    return "public"
-                return "unknown"
-
-        if def_match:
-            stack.append(("def", indent, None))
-            index = next_index
-            continue
-
-        index += 1
-
-    return "unknown"
-
-
-def _classify_nested_python_constructor_context_from_hunk(
-    file_diff: _FileDiff,
-    *,
-    change_index: int,
-) -> str:
-    current_indent = _python_indent_level(file_diff.ordered_lines[change_index][1])
-    if current_indent <= 4:
-        return "unknown"
-
-    public_class_depth = 0
-    has_private_class_scope = False
-    has_function_scope = False
-    scope_indent = current_indent
-    cursor = change_index - 1
-    while cursor >= 0:
-        candidate = file_diff.ordered_lines[cursor][1]
-        if not candidate.strip():
-            cursor -= 1
-            continue
-
-        candidate_indent = _python_indent_level(candidate)
-        if candidate_indent >= scope_indent:
-            cursor -= 1
-            continue
-
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(candidate)
-        if class_match and not candidate.lstrip().startswith("@"):
-            class_name = class_match.group(1)
-            if not class_name.startswith("_"):
-                public_class_depth += 1
-            else:
-                has_private_class_scope = True
-            scope_indent = candidate_indent
-            cursor -= 1
-            continue
-
-        if PYTHON_DEF_START_PATTERN.search(candidate):
-            has_function_scope = True
-            scope_indent = candidate_indent
-            cursor -= 1
-            continue
-
-        cursor -= 1
-
-    if has_function_scope:
-        return "nonpublic"
-    if has_private_class_scope:
-        return "nonpublic"
-    if public_class_depth > 1:
-        return "public"
-    return "unknown"
-
-
-def _iter_python_version_lines(
-    file_diff: _FileDiff,
-    *,
-    target_prefix: str,
-) -> list[tuple[str, bool]]:
-    active_prefixes = {" ", target_prefix}
-    return [
-        (line, prefix == target_prefix)
-        for prefix, line in file_diff.ordered_lines
-        if prefix in active_prefixes
-    ]
-
-
-def _collect_python_signature_block(
-    version_lines: list[tuple[str, bool]],
-    start_index: int,
-) -> tuple[str, bool, int]:
-    collected = [version_lines[start_index][0]]
-    block_is_target = version_lines[start_index][1]
-    paren_depth = collected[0].count("(") - collected[0].count(")")
-    cursor = start_index + 1
-
-    while cursor < len(version_lines):
-        stripped = _strip_python_inline_comment(collected[-1]).strip()
-        if paren_depth <= 0 and (
-            stripped.endswith(":")
-            or re.search(r"^\s*(?:async\s+)?def\b.*:\s*(?:\.\.\.|pass\b.*|return\b.*)$", stripped)
-        ):
-            break
-        line, is_target_line = version_lines[cursor]
-        collected.append(line)
-        block_is_target = block_is_target or is_target_line
-        paren_depth += line.count("(") - line.count(")")
-        cursor += 1
-
-    normalized = " ".join(line.strip() for line in collected)
-    return normalized, block_is_target, cursor
-
-
-def _collect_python_decorator_names(
-    version_lines: list[tuple[str, bool]],
-    def_index: int,
-) -> set[str]:
-    decorators: set[str] = set()
-    def_line = version_lines[def_index][0]
-    def_indent = _python_indent_level(def_line)
-    cursor = def_index - 1
-    while cursor >= 0:
-        line = version_lines[cursor][0]
-        stripped = line.strip()
-        if not stripped:
-            break
-        if _python_indent_level(line) != def_indent or not stripped.startswith("@"):
-            break
-        decorator_name = stripped[1:].split("(", 1)[0].strip()
-        if decorator_name:
-            decorators.add(decorator_name.split(".")[-1])
-        cursor -= 1
-    return decorators
-
-
-def _python_method_kind_from_decorators(decorators: set[str]) -> str:
-    if "staticmethod" in decorators:
-        return "staticmethod"
-    if "classmethod" in decorators:
-        return "classmethod"
-    if "setter" in decorators:
-        return "property-setter"
-    if "deleter" in decorators:
-        return "property-deleter"
-    if "getter" in decorators:
-        return "property-getter"
-    if any(decorator == "property" or decorator.endswith("property") for decorator in decorators):
-        return "property"
-    return "instance"
-
-
-def _is_public_python_member_name(name: str) -> bool:
-    if name == "__init__":
-        return True
-    if name.startswith("__") and name.endswith("__"):
-        return True
-    return not name.startswith("_")
-
-
-def _extract_python_signatures(
-    file_diff: _FileDiff,
-    *,
-    target_prefix: str,
-    workspace_loader: WorkspaceLoader | None = None,
-) -> dict[str, list[_FunctionSignature]]:
-    signatures: dict[str, list[_FunctionSignature]] = {}
-    scope_stack: list[tuple[str, int, str | None]] = []
-    version_lines = _iter_python_version_lines(file_diff, target_prefix=target_prefix)
-    index = 0
-
-    while index < len(version_lines):
-        line, _is_target_line = version_lines[index]
-        indent = _python_indent_level(line)
-        if line.strip():
-            while scope_stack and indent <= scope_stack[-1][1]:
-                scope_stack.pop()
-
-        class_match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if class_match and not line.lstrip().startswith("@"):
-            class_name = class_match.group(1)
-            scope_stack.append(
-                ("class", indent, class_name if not class_name.startswith("_") else None)
-            )
-            index += 1
-            continue
-
-        def_start = PYTHON_DEF_START_PATTERN.search(line)
-        if not def_start:
-            index += 1
-            continue
-        signature_start_index = index
-        signature_source, _block_is_target, index = _collect_python_signature_block(
-            version_lines,
-            index,
-        )
-        def_match = PYTHON_PUBLIC_DEF_PATTERN.search(signature_source)
-        if not def_match:
-            continue
-
-        name = def_match.group(1)
-        params = re.sub(r"\s+", "", def_match.group(2))
-        return_type = _normalize_type(def_match.group(3))
-        is_async = signature_source.lstrip().startswith("async def ")
-        decorators = _collect_python_decorator_names(version_lines, signature_start_index)
-        next_body_line: str | None = None
-        if index < len(version_lines):
-            candidate = version_lines[index][0]
-            if _python_indent_level(candidate) > _python_indent_level(line) and candidate.strip():
-                next_body_line = candidate.strip()
-        if _python_indent_level(line) > 0 and not _python_class_scope_is_public(scope_stack):
-            continue
-        public_class_path = _python_public_class_path(scope_stack)
-        has_function_scope = any(entry[0] == "def" for entry in scope_stack)
-        if def_match:
-            scope_stack.append(("def", indent, None))
-        if _python_indent_level(line) > 0:
-            if not _is_public_python_member_name(name):
-                continue
-            if name == "__init__" and _python_indent_level(line) > 4:
-                continue
-            if public_class_path and not has_function_scope:
-                symbol_name = ".".join([*public_class_path, name])
-            elif name == "__init__":
-                inferred_class = _infer_python_constructor_class_from_workspace(
-                    file_diff.path,
-                    body_anchor=next_body_line,
-                    workspace_loader=workspace_loader,
-                )
-                if not inferred_class:
-                    continue
-                symbol_name = f"{inferred_class}.__init__"
-            else:
-                inferred_class = _infer_python_member_class_from_workspace(
-                    file_diff.path,
-                    member_name=name,
-                    body_anchor=next_body_line,
-                    workspace_loader=workspace_loader,
-                )
-                if not inferred_class:
-                    continue
-                symbol_name = f"{inferred_class}.{name}"
-            method_kind = _python_method_kind_from_decorators(decorators)
-        else:
-            if indent > 0:
-                continue
-            symbol_name = name
-            method_kind = None
-
-        signature = _FunctionSignature(
-            name=symbol_name,
-            params=params,
-            return_type=return_type,
-            is_async=is_async,
-            source=signature_source,
-            method_kind=method_kind,
-        )
-        signatures.setdefault(symbol_name, []).append(signature)
-
-    return signatures
-
-
-def _extract_python_classes(
-    lines: list[str],
-    *,
-    has_explicit_all: bool = False,
-    explicit_exports: set[str] | None = None,
-    allow_implicit_classes: bool = True,
-) -> set[str]:
-    if not has_explicit_all and not allow_implicit_classes:
-        return set()
-    classes: set[str] = set()
-    scope_stack: list[tuple[str, int, str | None]] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        indent = _python_indent_level(line)
-        if line.strip():
-            while scope_stack and indent <= scope_stack[-1][1]:
-                scope_stack.pop()
-
-        match = PYTHON_PUBLIC_CLASS_PATTERN.search(line)
-        if not match:
-            def_start = PYTHON_DEF_START_PATTERN.search(line)
-            if not def_start:
-                index += 1
-                continue
-            signature_source, index = _collect_python_signature_source(lines, index)
-            if PYTHON_PUBLIC_DEF_PATTERN.search(signature_source):
-                scope_stack.append(("def", indent, None))
-            continue
-        name = match.group(1)
-        public_name = None
-        if name.startswith("_") and not (
-            has_explicit_all and explicit_exports is not None and name in explicit_exports
-        ):
-            public_name = None
-        else:
-            public_name = name
-
-        public_class_path = _python_public_class_path(scope_stack)
-        has_function_scope = any(entry[0] == "def" for entry in scope_stack)
-        if indent == 0:
-            if has_explicit_all and explicit_exports is not None and name not in explicit_exports:
-                scope_stack.append(("class", indent, public_name))
-                index += 1
-                continue
-            if public_name is not None:
-                classes.add(name)
-        elif public_name is not None and public_class_path and not has_function_scope:
-            classes.add(".".join([*public_class_path, name]))
-
-        scope_stack.append(("class", indent, public_name))
-        index += 1
-    return classes
 
 
 def _extract_python_floor_from_constraint(constraint: str) -> tuple[int, ...] | None:
@@ -942,229 +370,6 @@ def _extract_requires_python_floor(path: str, lines: list[str]) -> tuple[int, ..
             if floor is not None:
                 return floor
     return None
-
-
-def _is_optional_param(token: str) -> bool:
-    value = token.strip()
-    if not value:
-        return False
-    if value.startswith("..."):
-        return True
-    if "=" in value:
-        return True
-    left = value.split(":", 1)[0]
-    return left.endswith("?")
-
-
-def _normalize_python_annotation(node: ast.AST | None) -> str | None:
-    if node is None:
-        return None
-    return ast.unparse(node).strip()
-
-
-def _parse_python_parameter_specs(params: str) -> list[_PythonParameterSpec] | None:
-    try:
-        module = ast.parse(f"def _bumpkin_probe({params}):\n    pass\n")
-    except SyntaxError:
-        return None
-    if len(module.body) != 1 or not isinstance(module.body[0], ast.FunctionDef):
-        return None
-
-    arguments = module.body[0].args
-    specs: list[_PythonParameterSpec] = []
-    positional_args = [*arguments.posonlyargs, *arguments.args]
-    positional_defaults: list[ast.expr | None] = [None] * (
-        len(positional_args) - len(arguments.defaults)
-    ) + list(arguments.defaults)
-
-    for index, argument in enumerate(arguments.posonlyargs):
-        specs.append(
-            _PythonParameterSpec(
-                name=argument.arg,
-                kind="posonly",
-                required=positional_defaults[index] is None,
-                annotation=_normalize_python_annotation(argument.annotation),
-            )
-        )
-
-    positional_offset = len(arguments.posonlyargs)
-    for offset, argument in enumerate(arguments.args):
-        specs.append(
-            _PythonParameterSpec(
-                name=argument.arg,
-                kind="arg",
-                required=positional_defaults[positional_offset + offset] is None,
-                annotation=_normalize_python_annotation(argument.annotation),
-            )
-        )
-
-    if arguments.vararg is not None:
-        specs.append(
-            _PythonParameterSpec(
-                name=arguments.vararg.arg,
-                kind="vararg",
-                required=False,
-                annotation=_normalize_python_annotation(arguments.vararg.annotation),
-            )
-        )
-
-    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=False):
-        specs.append(
-            _PythonParameterSpec(
-                name=argument.arg,
-                kind="kwonly",
-                required=default is None,
-                annotation=_normalize_python_annotation(argument.annotation),
-            )
-        )
-
-    if arguments.kwarg is not None:
-        specs.append(
-            _PythonParameterSpec(
-                name=arguments.kwarg.arg,
-                kind="varkw",
-                required=False,
-                annotation=_normalize_python_annotation(arguments.kwarg.annotation),
-            )
-        )
-
-    return specs
-
-
-def _same_python_parameter_surface(
-    old_param: _PythonParameterSpec,
-    new_param: _PythonParameterSpec,
-) -> bool:
-    return (
-        _is_python_parameter_name_compatible(old_param, new_param)
-        and old_param.kind == new_param.kind
-        and old_param.required == new_param.required
-        and old_param.annotation == new_param.annotation
-    )
-
-
-def _is_python_parameter_name_compatible(
-    old_param: _PythonParameterSpec,
-    new_param: _PythonParameterSpec,
-) -> bool:
-    if old_param.kind in {"posonly", "vararg", "varkw"}:
-        return True
-    return old_param.name == new_param.name
-
-
-def _is_python_parameter_kind_compatible(
-    old_param: _PythonParameterSpec,
-    new_param: _PythonParameterSpec,
-) -> bool:
-    if old_param.kind == new_param.kind:
-        return True
-    return new_param.kind == "arg" and old_param.kind in {"kwonly", "posonly"}
-
-
-def _is_python_parameter_surface_compatible(
-    old_param: _PythonParameterSpec,
-    new_param: _PythonParameterSpec,
-) -> bool:
-    return (
-        _is_python_parameter_name_compatible(old_param, new_param)
-        and _is_python_parameter_kind_compatible(old_param, new_param)
-        and old_param.required == new_param.required
-        and old_param.annotation == new_param.annotation
-    )
-
-
-def _has_compatible_python_parameter_surface(old_params: str, new_params: str) -> bool:
-    old_specs = _parse_python_parameter_specs(old_params)
-    new_specs = _parse_python_parameter_specs(new_params)
-    if old_specs is None or new_specs is None or len(old_specs) != len(new_specs):
-        return False
-    return all(
-        _is_python_parameter_surface_compatible(old_spec, new_spec)
-        for old_spec, new_spec in zip(old_specs, new_specs, strict=False)
-    )
-
-
-def _is_optional_widening(old_params: str, new_params: str) -> bool:
-    old_specs = _parse_python_parameter_specs(old_params)
-    new_specs = _parse_python_parameter_specs(new_params)
-    if old_specs is not None and new_specs is not None:
-        if len(new_specs) < len(old_specs):
-            return False
-        if len(new_specs) == len(old_specs):
-            widened_existing = False
-            for old_spec, new_spec in zip(old_specs, new_specs, strict=False):
-                if not (
-                    _is_python_parameter_name_compatible(old_spec, new_spec)
-                    and _is_python_parameter_kind_compatible(old_spec, new_spec)
-                    and old_spec.annotation == new_spec.annotation
-                ):
-                    return False
-                if old_spec.required and not new_spec.required:
-                    widened_existing = True
-                elif old_spec.required != new_spec.required:
-                    return False
-            return widened_existing
-        if not all(
-            _same_python_parameter_surface(old_spec, new_spec)
-            for old_spec, new_spec in zip(old_specs, new_specs[: len(old_specs)], strict=False)
-        ):
-            return False
-        extras = new_specs[len(old_specs) :]
-        return bool(extras) and all(not extra.required for extra in extras)
-
-    old_list = _split_top_level_params(old_params)
-    new_list = _split_top_level_params(new_params)
-    if len(new_list) < len(old_list):
-        return False
-    if new_list[: len(old_list)] != old_list:
-        return False
-    extras = new_list[len(old_list) :]
-    if not extras:
-        return False
-    return all(_is_optional_param(param) for param in extras)
-
-
-def _is_requiredness_tightening(old_params: str, new_params: str) -> bool:
-    old_specs = _parse_python_parameter_specs(old_params)
-    new_specs = _parse_python_parameter_specs(new_params)
-    if old_specs is not None and new_specs is not None:
-        if len(new_specs) < len(old_specs):
-            return True
-
-        for index, old_spec in enumerate(old_specs):
-            if index >= len(new_specs):
-                return True
-            new_spec = new_specs[index]
-            if not _is_python_parameter_name_compatible(
-                old_spec, new_spec
-            ) or not _is_python_parameter_kind_compatible(old_spec, new_spec):
-                return False
-            if not old_spec.required and new_spec.required:
-                return True
-
-        extras = new_specs[len(old_specs) :]
-        return any(extra.required for extra in extras)
-
-    old_list = _split_top_level_params(old_params)
-    new_list = _split_top_level_params(new_params)
-    if len(new_list) < len(old_list):
-        return True
-
-    for index, old_token in enumerate(old_list):
-        if index >= len(new_list):
-            return True
-        new_token = new_list[index]
-        if old_token == new_token:
-            continue
-        if _is_optional_param(old_token) and not _is_optional_param(new_token):
-            return True
-        return True
-
-    if len(new_list) > len(old_list):
-        extras = new_list[len(old_list) :]
-        return not all(_is_optional_param(param) for param in extras)
-
-    return False
 
 
 def _build_finding(
