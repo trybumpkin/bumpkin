@@ -120,9 +120,7 @@ def detect_python_packaging_floor_raise(
     removed_version_lines = [
         line for prefix, line in file_diff.ordered_lines if prefix in {" ", "-"}
     ]
-    added_version_lines = [
-        line for prefix, line in file_diff.ordered_lines if prefix in {" ", "+"}
-    ]
+    added_version_lines = [line for prefix, line in file_diff.ordered_lines if prefix in {" ", "+"}]
     removed_floor = _extract_requires_python_floor(file_diff.path, removed_version_lines)
     added_floor = _extract_requires_python_floor(file_diff.path, added_version_lines)
     if (
@@ -146,10 +144,13 @@ def build_python_detection_context(
         file_diff.path,
         workspace_loader=workspace_loader,
     )
-    workspace_api_reexport_names = _workspace_python_api_reexport_names(
-        file_diff.path,
-        workspace_loader=workspace_loader,
-    ) or set()
+    workspace_api_reexport_names = (
+        _workspace_python_api_reexport_names(
+            file_diff.path,
+            workspace_loader=workspace_loader,
+        )
+        or set()
+    )
     removed_import_public_names = _extract_python_import_public_names(
         removed_version_lines,
         path=file_diff.path,
@@ -178,10 +179,14 @@ def build_python_detection_context(
     if workspace_api_reexport_names:
         api_explicit_public_names = set(workspace_api_reexport_names)
         if workspace_api_reexport_names & (removed_import_public_names | added_import_public_names):
-            api_explicit_public_names.update(removed_import_public_names | added_import_public_names)
+            api_explicit_public_names.update(
+                removed_import_public_names | added_import_public_names
+            )
     removed_all_contract = _extract_python_all_contract(removed_version_lines)
     added_all_contract = _extract_python_all_contract(added_version_lines)
-    removed_has_explicit_all = removed_all_contract.has_explicit and removed_all_contract.is_supported
+    removed_has_explicit_all = (
+        removed_all_contract.has_explicit and removed_all_contract.is_supported
+    )
     added_has_explicit_all = added_all_contract.has_explicit and added_all_contract.is_supported
     removed_all_exports = set(removed_all_contract.exports)
     added_all_exports = set(added_all_contract.exports)
@@ -215,7 +220,9 @@ def build_python_detection_context(
     )
     touched_meaningful_code = any(
         stripped and not stripped.startswith("#")
-        for stripped in (line.strip() for line in (*file_diff.added_lines, *file_diff.removed_lines))
+        for stripped in (
+            line.strip() for line in (*file_diff.added_lines, *file_diff.removed_lines)
+        )
     )
     unresolved_candidate_names = sorted(
         (
@@ -272,14 +279,18 @@ def build_python_detection_context(
         removed_version_lines,
         path=file_diff.path,
         workspace_lines=workspace_lines,
-        explicit_public_names=removed_all_exports if removed_has_explicit_all else api_explicit_public_names,
+        explicit_public_names=removed_all_exports
+        if removed_has_explicit_all
+        else api_explicit_public_names,
         workspace_loader=workspace_loader,
     )
     added_import_bindings = _extract_python_public_import_bindings(
         added_version_lines,
         path=file_diff.path,
         workspace_lines=workspace_lines,
-        explicit_public_names=added_all_exports if added_has_explicit_all else api_explicit_public_names,
+        explicit_public_names=added_all_exports
+        if added_has_explicit_all
+        else api_explicit_public_names,
         workspace_loader=workspace_loader,
     )
     if workspace_explicit_exports is not None and not touched_all_assignment:
@@ -357,10 +368,14 @@ def build_python_detection_context(
             cursor = index + 1
             while cursor < len(file_diff.ordered_lines):
                 _next_prefix, candidate = file_diff.ordered_lines[cursor]
-                if candidate.strip() and _python_indent_level(candidate) > _python_indent_level(line):
+                if candidate.strip() and _python_indent_level(candidate) > _python_indent_level(
+                    line
+                ):
                     next_body_line = candidate.strip()
                     break
-                if candidate.strip() and _python_indent_level(candidate) <= _python_indent_level(line):
+                if candidate.strip() and _python_indent_level(candidate) <= _python_indent_level(
+                    line
+                ):
                     break
                 cursor += 1
             context = _classify_nested_python_constructor_context(
@@ -412,7 +427,8 @@ def build_python_detection_context(
             - explicit_shared_local_public_exports
         )
         shared_public_exports = (
-            shared_public_exports - (shared_local_public_exports - explicit_shared_local_public_exports)
+            shared_public_exports
+            - (shared_local_public_exports - explicit_shared_local_public_exports)
         ) | (shared_local_public_exports & workspace_api_reexport_names)
     workspace_public_classes = workspace_public_names or set()
 

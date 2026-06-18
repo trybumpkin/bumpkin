@@ -26,7 +26,9 @@ def run_python_api_detection(
     counter = 0
 
     for file_diff in _parse_diff_files(diff_text):
-        floor_raise = finding_python_detection_context.detect_python_packaging_floor_raise(file_diff)
+        floor_raise = finding_python_detection_context.detect_python_packaging_floor_raise(
+            file_diff
+        )
         if floor_raise is not None:
             removed_floor, added_floor = floor_raise
             counter += 1

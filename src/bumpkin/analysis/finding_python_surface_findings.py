@@ -170,9 +170,7 @@ def append_python_surface_findings(
 
     shared_import_binding_symbols = sorted(
         symbol
-        for symbol in (
-            set(context.removed_import_bindings) & set(context.added_import_bindings)
-        )
+        for symbol in (set(context.removed_import_bindings) & set(context.added_import_bindings))
         if symbol in context.shared_public_exports
         and context.removed_import_bindings[symbol] != context.added_import_bindings[symbol]
     )
@@ -255,9 +253,7 @@ def append_python_surface_findings(
 
     unresolved_api_import_binding_symbols = sorted(
         symbol
-        for symbol in (
-            set(context.removed_import_bindings) & set(context.added_import_bindings)
-        )
+        for symbol in (set(context.removed_import_bindings) & set(context.added_import_bindings))
         if _is_python_api_surface(context.file_diff.path)
         and symbol not in context.shared_public_exports
         and context.removed_import_bindings[symbol] != context.added_import_bindings[symbol]
@@ -305,14 +301,10 @@ def append_python_surface_findings(
         for name in (context.removed_local_public_names & context.added_local_public_names)
         if name.lower() not in {"helper", "helpers", "util", "utils"}
     }
-    explicit_api_import_alias_change = (
-        _extract_explicit_api_import_alias_change(context)
-    )
+    explicit_api_import_alias_change = _extract_explicit_api_import_alias_change(context)
     unresolved_api_import_surface_symbols = sorted(
         symbol
-        for symbol in (
-            context.removed_import_public_names ^ context.added_import_public_names
-        )
+        for symbol in (context.removed_import_public_names ^ context.added_import_public_names)
         if _is_python_api_surface(context.file_diff.path)
         and context.workspace_explicit_exports is None
         and not context.removed_has_explicit_all
@@ -365,13 +357,10 @@ def append_python_surface_findings(
 def _extract_explicit_api_import_alias_change(context: PythonDetectionContext) -> bool:
     from bumpkin.analysis.finding_python_surface import has_python_explicit_public_import_alias
 
-    return (
-        has_python_explicit_public_import_alias(
-            context.removed_version_lines,
-            path=context.file_diff.path,
-        )
-        or has_python_explicit_public_import_alias(
-            context.added_version_lines,
-            path=context.file_diff.path,
-        )
+    return has_python_explicit_public_import_alias(
+        context.removed_version_lines,
+        path=context.file_diff.path,
+    ) or has_python_explicit_public_import_alias(
+        context.added_version_lines,
+        path=context.file_diff.path,
     )
