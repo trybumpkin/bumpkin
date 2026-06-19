@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import time
-import urllib.error
-import urllib.request
 from typing import Any, cast
 
-from bumpkin.io.tokens import is_github_models_endpoint, is_openrouter_endpoint
 from bumpkin.prompt_pack import build_messages as build_prompt_messages
 from bumpkin.prompt_pack import get_prompt_metadata
 from bumpkin.providers.chunking import (
@@ -22,6 +17,21 @@ from bumpkin.providers.chunking import (
 )
 from bumpkin.providers.chunking import (
     with_chunking_metadata as _with_chunking_metadata_impl,
+)
+from bumpkin.providers.llm_transport import (
+    LLMUnavailableError,
+)
+from bumpkin.providers.llm_transport import (
+    normalize_request_endpoint as _normalize_request_endpoint_impl,
+)
+from bumpkin.providers.llm_transport import (
+    post_json_request as _post_json_request_impl,
+)
+from bumpkin.providers.llm_transport import (
+    provider_mode_for_endpoint as _provider_mode_for_endpoint_impl,
+)
+from bumpkin.providers.llm_transport import (
+    request_headers as _request_headers_impl,
 )
 from bumpkin.providers.semantic import (
     classified_result as _classified_result_impl,
@@ -38,12 +48,6 @@ from bumpkin.providers.semantic import (
 from bumpkin.providers.semantic import (
     stub_recommendation as _stub_recommendation_impl,
 )
-from bumpkin.retry import (
-    apply_model_call_interval,
-    compute_retry_delay,
-    is_retryable_http_code,
-    register_rate_limit_cooldown,
-)
 
 VALID_LABELS = {"MAJOR", "MINOR", "PATCH", "NO_BUMP"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -57,10 +61,6 @@ AGGREGATE_CHANGELOG = {
 CHANGELOG_PATTERN = re.compile(
     r"^(feat|fix|chore|refactor|perf|docs|build|ci|test|style)(\([^)]+\))?(!)?:\s+\S"
 )
-
-
-class LLMUnavailableError(RuntimeError):
-    pass
 
 
 class LLMResponseError(RuntimeError):
@@ -80,42 +80,15 @@ def _as_object_list(value: object) -> list[object] | None:
 
 
 def _provider_mode_for_endpoint(endpoint: str) -> str:
-    if is_openrouter_endpoint(endpoint):
-        return "openrouter"
-    if is_github_models_endpoint(endpoint):
-        return "github-models"
-    return "openai-compatible"
+    return _provider_mode_for_endpoint_impl(endpoint)
 
 
-def _normalize_request_endpoint(endpoint: str) -> str:
-    normalized = endpoint.strip()
-    if not normalized:
-        return normalized
-    lowered = normalized.lower()
-    if lowered.endswith(("/chat/completions", "/responses")):
-        return normalized
-    return normalized.rstrip("/") + "/chat/completions"
+def _normalize_request_endpoint(endpoint: str) -> str:  # pyright: ignore[reportUnusedFunction]
+    return _normalize_request_endpoint_impl(endpoint)
 
 
-def _request_headers(token: str, endpoint: str) -> dict[str, str]:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    if _provider_mode_for_endpoint(endpoint) == "github-models":
-        headers["Accept"] = "application/vnd.github+json"
-        headers["X-GitHub-Api-Version"] = "2022-11-28"
-        return headers
-
-    # OpenRouter supports these optional headers for routing/analytics.
-    referer = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
-    app_title = os.getenv("OPENROUTER_TITLE", "bumpkin").strip()
-    if referer:
-        headers["HTTP-Referer"] = referer
-    if app_title:
-        headers["X-Title"] = app_title
-    return headers
+def _request_headers(token: str, endpoint: str) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    return _request_headers_impl(token, endpoint)
 
 
 def _semantic_fallback_recommendation(
@@ -473,77 +446,16 @@ def _call_github_models(
         "max_tokens": 400,
     }
 
-    attempts = max(1, max_retries)
-    retry_delays: list[float] = []
-    last_error: str | None = None
-
-    for attempt in range(attempts):
-        apply_model_call_interval()
-        request_endpoint = _normalize_request_endpoint(endpoint)
-        req = urllib.request.Request(
-            request_endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers=_request_headers(token, endpoint),
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=max(1, request_timeout)) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-                content = _extract_content(raw)
-                parsed = _extract_json_payload(content)
-                return validate_recommendation(_coerce_recommendation_payload(parsed))
-        except LLMResponseError as err:
-            last_error = str(err)
-            if attempt < attempts - 1:
-                retry_delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(retry_delay)
-                time.sleep(retry_delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise
-        except urllib.error.HTTPError as err:
-            code = err.code
-            body = err.read().decode("utf-8", errors="replace")
-            last_error = f"HTTP {code}: {body[:300]}"
-            if is_retryable_http_code(code) and attempt < attempts - 1:
-                base_delays = (60.0, 90.0, 90.0) if code == 429 else (2.0, 4.0, 8.0)
-                if code == 429:
-                    register_rate_limit_cooldown(headers=err.headers, minimum_seconds=60.0)
-                retry_delay = compute_retry_delay(
-                    attempt_index=attempt,
-                    headers=err.headers,
-                    base_delays=base_delays,
-                )
-                retry_delays.append(retry_delay)
-                time.sleep(retry_delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise LLMUnavailableError(last_error) from err
-        except urllib.error.URLError as err:
-            last_error = str(err.reason)
-            if attempt < attempts - 1:
-                retry_delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(retry_delay)
-                time.sleep(retry_delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise LLMUnavailableError(last_error) from err
-        except TimeoutError as err:
-            last_error = str(err) or "request timed out"
-            if attempt < attempts - 1:
-                retry_delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(retry_delay)
-                time.sleep(retry_delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise LLMUnavailableError(last_error) from err
-
-    provider_name = _provider_mode_for_endpoint(endpoint)
-    raise LLMUnavailableError(last_error or f"Failed to call {provider_name} model API.")
+    raw = _post_json_request_impl(
+        endpoint=endpoint,
+        token=token,
+        payload=payload,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+    )
+    content = _extract_content(raw)
+    parsed = _extract_json_payload(content)
+    return validate_recommendation(_coerce_recommendation_payload(parsed))
 
 
 def _call_chunk_with_fallback(
