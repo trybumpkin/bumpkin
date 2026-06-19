@@ -8,7 +8,6 @@ from typing import Any, Protocol, Self
 
 from bumpkin.integrations.github.events import (
     is_recommendation_merge_event,
-    normalize_webhook_event,
 )
 from bumpkin.integrations.github.github_auth import GitHubAppInstallationTokenProvider
 from bumpkin.integrations.github.ingress import (
@@ -30,13 +29,11 @@ from bumpkin.integrations.github.reactions import (
 )
 from bumpkin.integrations.github.recommendations import (
     GitHubRecommendationCommentPublisher,
-    MergeRecommendationRequest,
     NoopRecommendationPublisher,
     PipelineRecommendationRunner,
     RecommendationPublisher,
     RecommendationRunner,
 )
-from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
 from bumpkin.integrations.github.releases import (
     GitHubReleasePublisher,
     NoopReleasePublisher,
@@ -75,7 +72,6 @@ from bumpkin.integrations.github.webhook_commands import (
     _resolve_shell_operation as _resolve_shell_operation_impl,
 )
 from bumpkin.integrations.github.webhook_parsing import (
-    _extract_pull_request_metadata,
     _normalize_headers,
     _normalize_version_token,
     _status_for_outcome,
@@ -87,6 +83,24 @@ from bumpkin.integrations.github.webhook_release_flow import (
 )
 from bumpkin.integrations.github.webhook_release_flow import (
     process_release_command as _process_release_command_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    build_event_payload,
+)
+from bumpkin.integrations.github.webhook_service import (
+    deferred_status_value as _deferred_status_value_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    has_pending_self_deferred_merge_for_current_deploy as _has_pending_self_deferred_merge_for_current_deploy_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    process_merge_recommendation as _process_merge_recommendation_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    replay_deferred_merge_recommendations_once as _replay_deferred_merge_recommendations_once_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    should_defer_merge_recommendation as _should_defer_merge_recommendation_impl,
 )
 from bumpkin.integrations.github.workflows import (
     GitHubWorkflowDispatcher,
@@ -262,79 +276,47 @@ class AppWebhookService:
             return GitHubReleasePublisher(token=token)
         return self._default_release_publisher
 
+    def _resolve_recommendation_publisher(self, event: AppEvent | None) -> RecommendationPublisher:
+        if self._recommendation_publisher is not None:
+            return self._recommendation_publisher
+        token = self._resolve_provider_token(event)
+        if token is not None:
+            return GitHubRecommendationCommentPublisher(token=token)
+        return self._default_recommendation_publisher
+
     def _deferred_status_value(self) -> str:
-        revision = self._deployment_revision or "unknown"
-        return f"{_DEFERRED_DEPLOY_STATUS_PREFIX}{revision}"
+        return _deferred_status_value_impl(self._deployment_revision)
 
     def _should_defer_merge_recommendation(self, event: AppEvent) -> bool:
-        if not self._defer_self_merge_recommendation:
-            return False
-        if self._self_repository is None or self._deployment_revision is None:
-            return False
-        if not is_recommendation_merge_event(event):
-            return False
-        repository = (event.repository or "").strip().lower()
-        if repository != self._self_repository:
-            return False
-        if (event.base_ref or "").strip() != "main":
-            return False
-        merge_commit_sha = (event.merge_commit_sha or "").strip()
-        if not merge_commit_sha:
-            return False
-        return merge_commit_sha != self._deployment_revision
+        return _should_defer_merge_recommendation_impl(
+            event,
+            defer_self_merge_recommendation=self._defer_self_merge_recommendation,
+            self_repository=self._self_repository,
+            deployment_revision=self._deployment_revision,
+        )
 
     def _replay_deferred_merge_recommendations_once(self) -> None:
-        if not self._defer_self_merge_recommendation:
-            return
-        if self._self_repository is None or self._deployment_revision is None:
-            return
-        try:
-            deferred_events = self._state_store.list_deferred_merge_events(
-                provider="github",
-                repository=self._self_repository,
-                limit=20,
-            )
-        except Exception:  # noqa: BLE001 - startup catch-up should not crash service boot
-            return
-
-        for stored_event in deferred_events:
-            deferred_revision = (
-                stored_event.status.removeprefix(_DEFERRED_DEPLOY_STATUS_PREFIX)
-                if stored_event.status.startswith(_DEFERRED_DEPLOY_STATUS_PREFIX)
-                else None
-            )
-            if deferred_revision == self._deployment_revision:
-                continue
-            event = normalize_webhook_event(
-                "pull_request",
-                stored_event.payload,
-                delivery_id=stored_event.provider_event_id,
-            )
-            if event is None or not is_recommendation_merge_event(event):
-                continue
-            if (event.base_ref or "").strip() != "main":
-                continue
-            self._process_merge_recommendation(
-                event=event,
-                payload=stored_event.payload,
-                response_payload=None,
-            )
+        _replay_deferred_merge_recommendations_once_impl(
+            defer_self_merge_recommendation=self._defer_self_merge_recommendation,
+            self_repository=self._self_repository,
+            deployment_revision=self._deployment_revision,
+            state_store=self._state_store,
+            process_merge_recommendation_fn=lambda event, payload, response_payload: (
+                self._process_merge_recommendation(
+                    event=event,
+                    payload=payload,
+                    response_payload=response_payload,
+                )
+            ),
+        )
 
     def _has_pending_self_deferred_merge_for_current_deploy(self) -> bool:
-        if not self._defer_self_merge_recommendation:
-            return False
-        if self._self_repository is None or self._deployment_revision is None:
-            return False
-        deferred_status = self._deferred_status_value()
-        try:
-            deferred_events = self._state_store.list_deferred_merge_events(
-                provider="github",
-                repository=self._self_repository,
-                limit=20,
-            )
-        except Exception:  # noqa: BLE001 - defer checks must not crash webhook handling
-            return False
-        return any(event.status == deferred_status for event in deferred_events)
+        return _has_pending_self_deferred_merge_for_current_deploy_impl(
+            defer_self_merge_recommendation=self._defer_self_merge_recommendation,
+            self_repository=self._self_repository,
+            deployment_revision=self._deployment_revision,
+            state_store=self._state_store,
+        )
 
     def _process_merge_recommendation(
         self,
@@ -343,140 +325,15 @@ class AppWebhookService:
         payload: Mapping[str, object],
         response_payload: dict[str, Any] | None,
     ) -> None:
-        recommendation_body: str | None = None
-        try:
-            provider_token = self._resolve_provider_token(event)
-            recommendation_request = MergeRecommendationRequest(
-                event=event,
-                payload=payload,
-                provider_token=provider_token,
-            )
-            recommendation = self._recommendation_runner.generate(recommendation_request)
-            recommendation_body = recommendation.body
-        except Exception as err:  # noqa: BLE001 - recommendation generation failures are surfaced
-            if response_payload is not None:
-                response_payload["recommendation"] = {
-                    "status": "failed",
-                    "reason": "runner_error",
-                    "message": str(err).strip() or "recommendation generation failed",
-                }
-            return
-
-        if response_payload is not None:
-            response_payload["recommendation"] = {
-                "status": "generated",
-                "label": recommendation.label,
-                "current_version": recommendation.current_version,
-            }
-        if (
-            recommendation.label is not None
-            and event.repository is not None
-            and event.pull_request_number is not None
-        ):
-            try:
-                self._state_store.record_recommendation_snapshot(
-                    repository=event.repository,
-                    pull_request_number=event.pull_request_number,
-                    label=recommendation.label,
-                    current_version=recommendation.current_version,
-                    source="app_merge",
-                    source_event_id=event.delivery_id,
-                )
-            except Exception as err:  # noqa: BLE001 - persistence failures should not fail ingress
-                if response_payload is not None:
-                    response_payload["recommendation_persistence"] = {
-                        "status": "failed",
-                        "reason": "store_error",
-                        "message": str(err).strip() or "recommendation snapshot persistence failed",
-                    }
-            else:
-                if response_payload is not None:
-                    response_payload["recommendation_persistence"] = {"status": "stored"}
-            try:
-                merge_commit_sha = (
-                    event.merge_commit_sha or event.head_sha or event.base_sha or ""
-                ).strip()
-                if not merge_commit_sha:
-                    merge_commit_sha = f"unknown-pr-{event.pull_request_number}"
-                pr_metadata = _extract_pull_request_metadata(payload)
-                backlog_id = self._state_store.upsert_release_backlog_item(
-                    repository=event.repository,
-                    pull_request_number=event.pull_request_number,
-                    merge_commit_sha=merge_commit_sha,
-                    recommended_label=recommendation.label,
-                    recommended_current_version=recommendation.current_version,
-                    pull_request_title=pr_metadata["pull_request_title"],
-                    pull_request_author_login=pr_metadata["pull_request_author_login"],
-                    pull_request_url=pr_metadata["pull_request_url"],
-                    release_summary=pr_metadata["release_summary"],
-                    source_event_id=event.delivery_id,
-                )
-            except Exception as err:  # noqa: BLE001 - backlog persistence failures should not fail ingress
-                if response_payload is not None:
-                    response_payload["release_backlog"] = {
-                        "status": "failed",
-                        "reason": "store_error",
-                        "message": str(err).strip() or "release backlog persistence failed",
-                    }
-            else:
-                if response_payload is not None:
-                    response_payload["release_backlog"] = {
-                        "status": "upserted",
-                        "id": backlog_id,
-                    }
-                try:
-                    backlog_items = self._state_store.list_unreleased_release_backlog_items(
-                        repository=event.repository,
-                    )
-                except Exception:  # noqa: BLE001 - preview should not fail recommendation handling
-                    backlog_items = []
-                if backlog_items:
-                    aggregate = aggregate_release_backlog(backlog_items)
-                    recommendation_body = _rewrite_recommendation_next_version(
-                        body=recommendation_body or recommendation.body,
-                        current_version=aggregate.current_version,
-                        next_version=aggregate.next_version,
-                    )
-                    if response_payload is not None:
-                        response_payload["release_preview"] = {
-                            "status": "computed",
-                            "baseline_version": aggregate.current_version,
-                            "highest_unreleased_label": aggregate.recommended_label
-                            or aggregate.aggregated_label,
-                            "next_version": aggregate.next_version,
-                        }
-        try:
-            recommendation_publisher = self._recommendation_publisher
-            if recommendation_publisher is None:
-                token = self._resolve_provider_token(event)
-                if token is not None:
-                    recommendation_publisher = GitHubRecommendationCommentPublisher(token=token)
-                else:
-                    recommendation_publisher = self._default_recommendation_publisher
-            published_url = recommendation_publisher.publish(
-                repository=event.repository or "",
-                issue_number=event.pull_request_number or 0,
-                body=recommendation_body or recommendation.body,
-            )
-        except Exception as err:  # noqa: BLE001 - publishing failures should not fail ingress
-            if response_payload is not None:
-                response_payload["recommendation_delivery"] = {
-                    "status": "failed",
-                    "reason": "publisher_error",
-                    "message": str(err).strip() or "recommendation publish failed",
-                }
-            return
-        if response_payload is not None:
-            if published_url:
-                response_payload["recommendation_delivery"] = {
-                    "status": "posted",
-                    "url": published_url,
-                }
-            else:
-                response_payload["recommendation_delivery"] = {
-                    "status": "skipped",
-                    "reason": "publisher_unavailable",
-                }
+        _process_merge_recommendation_impl(
+            event=event,
+            payload=payload,
+            response_payload=response_payload,
+            state_store=self._state_store,
+            recommendation_runner=self._recommendation_runner,
+            resolve_provider_token=self._resolve_provider_token,
+            resolve_recommendation_publisher=self._resolve_recommendation_publisher,
+        )
 
     def _process_shell_command(
         self,
@@ -564,18 +421,7 @@ class AppWebhookService:
             "reason": result.reason,
         }
         if result.event is not None:
-            response_payload["event"] = {
-                "event": result.event.event,
-                "delivery_id": result.event.delivery_id,
-                "repository": result.event.repository,
-                "pull_request_number": result.event.pull_request_number,
-                "merged": result.event.merged,
-                "merge_commit_sha": result.event.merge_commit_sha,
-                "base_ref": result.event.base_ref,
-                "base_sha": result.event.base_sha,
-                "head_ref": result.event.head_ref,
-                "head_sha": result.event.head_sha,
-            }
+            response_payload["event"] = build_event_payload(result.event)
         if (
             result.event is not None
             and result.envelope is not None
