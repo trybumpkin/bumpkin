@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
-import time
-import urllib.error
 import urllib.request
 from typing import Any
 
-from bumpkin.io.tokens import is_github_models_endpoint
 from bumpkin.orchestrator import court_messages as orchestrator_court_messages
+from bumpkin.orchestrator import court_transport as orchestrator_court_transport
 from bumpkin.orchestrator.court_payload import (
     extract_case_file_evidence_ids as _extract_case_file_evidence_ids,
 )
@@ -64,15 +61,7 @@ COURT_RESPONSE_SCHEMA: dict[str, Any] = {
 
 
 def _request_headers(token: str, endpoint: str) -> dict[str, str]:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    if is_github_models_endpoint(endpoint):
-        headers["Accept"] = "application/vnd.github+json"
-        headers["X-GitHub-Api-Version"] = "2022-11-28"
-    return headers
+    return orchestrator_court_transport.request_headers(token, endpoint)
 
 
 def request_headers(token: str, endpoint: str) -> dict[str, str]:
@@ -117,42 +106,25 @@ def _attempt_repair_payload(
     valid_evidence_ids: set[str] | None,
     request_timeout: int,
 ) -> dict[str, Any]:
-    payload = {
-        "model": model,
-        "messages": _build_repair_messages(raw_output=raw_output, fallback_label=fallback_label),
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": COURT_SCHEMA_NAME,
-                "strict": True,
-                "schema": COURT_RESPONSE_SCHEMA,
-            },
-        },
-        "temperature": 0,
-        "max_tokens": REPAIR_MAX_OUTPUT_TOKENS,
-    }
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers=_request_headers(token, endpoint),
+    return orchestrator_court_transport.attempt_repair_payload(
+        token=token,
+        endpoint=endpoint,
+        model=model,
+        raw_output=raw_output,
+        fallback_label=fallback_label,
+        valid_evidence_ids=valid_evidence_ids,
+        request_timeout=request_timeout,
+        schema_name=COURT_SCHEMA_NAME,
+        response_schema=COURT_RESPONSE_SCHEMA,
+        max_output_tokens=REPAIR_MAX_OUTPUT_TOKENS,
+        request_headers_fn=_request_headers,
+        build_repair_messages_fn=_build_repair_messages,
+        extract_content_fn=_extract_content,
+        extract_json_payload_fn=_extract_json_payload,
+        validate_court_payload_fn=_validate_court_payload,
+        request_factory=urllib.request.Request,
+        urlopen_fn=urllib.request.urlopen,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=max(1, request_timeout)) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-        return _validate_court_payload(
-            _extract_json_payload(_extract_content(raw), fallback_label=fallback_label),
-            valid_evidence_ids=valid_evidence_ids,
-        )
-    except urllib.error.HTTPError as err:
-        body = err.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"repair_http_{err.code}: {body[:180]}") from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"repair_url_error: {err.reason}") from err
-    except TimeoutError as err:
-        raise RuntimeError(str(err) or "repair request timed out") from err
-    except (ValueError, RuntimeError) as err:
-        raise RuntimeError(f"repair_parse_error: {err}") from err
 
 
 def _call_model(
@@ -166,102 +138,30 @@ def _call_model(
     request_timeout: int,
     valid_evidence_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    payload = {
-        "model": model,
-        "messages": messages,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": COURT_SCHEMA_NAME,
-                "strict": True,
-                "schema": COURT_RESPONSE_SCHEMA,
-            },
-        },
-        "temperature": 0,
-        "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
-    }
-    attempts = max(1, max_retries)
-    retry_delays: list[float] = []
-    last_error = "unknown"
-    for attempt in range(attempts):
-        apply_model_call_interval()
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers=_request_headers(token, endpoint),
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=max(1, request_timeout)) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-            try:
-                return _validate_court_payload(
-                    _extract_json_payload(_extract_content(raw), fallback_label=fallback_label),
-                    valid_evidence_ids=valid_evidence_ids,
-                )
-            except (ValueError, RuntimeError) as parse_err:
-                raw_snapshot = json.dumps(raw, ensure_ascii=True)
-                try:
-                    return _attempt_repair_payload(
-                        token=token,
-                        endpoint=endpoint,
-                        model=model,
-                        raw_output=raw_snapshot,
-                        fallback_label=fallback_label,
-                        valid_evidence_ids=valid_evidence_ids,
-                        request_timeout=request_timeout,
-                    )
-                except RuntimeError as repair_err:
-                    raise RuntimeError(f"{parse_err}; repair_failed={repair_err}") from repair_err
-        except urllib.error.HTTPError as err:
-            body = err.read().decode("utf-8", errors="replace")
-            last_error = f"HTTP {err.code}: {body[:280]}"
-            if is_retryable_http_code(err.code) and attempt < attempts - 1:
-                base_delays = (60.0, 90.0, 90.0) if err.code == 429 else (2.0, 4.0, 8.0)
-                if err.code == 429:
-                    register_rate_limit_cooldown(headers=err.headers, minimum_seconds=60.0)
-                delay = compute_retry_delay(
-                    attempt_index=attempt,
-                    headers=err.headers,
-                    base_delays=base_delays,
-                )
-                retry_delays.append(delay)
-                time.sleep(delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise RuntimeError(last_error) from err
-        except urllib.error.URLError as err:
-            last_error = str(err.reason)
-            if attempt < attempts - 1:
-                delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(delay)
-                time.sleep(delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise RuntimeError(last_error) from err
-        except TimeoutError as err:
-            last_error = str(err) or "request timed out"
-            if attempt < attempts - 1:
-                delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(delay)
-                time.sleep(delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise RuntimeError(last_error) from err
-        except (ValueError, RuntimeError) as err:
-            last_error = str(err)
-            if attempt < attempts - 1:
-                delay = compute_retry_delay(attempt_index=attempt)
-                retry_delays.append(delay)
-                time.sleep(delay)
-                continue
-            if retry_delays:
-                last_error += f" retry_delays={retry_delays}"
-            raise RuntimeError(last_error) from err
-    raise RuntimeError(last_error)
+    return orchestrator_court_transport.call_model(
+        token=token,
+        endpoint=endpoint,
+        model=model,
+        messages=messages,
+        fallback_label=fallback_label,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+        valid_evidence_ids=valid_evidence_ids,
+        schema_name=COURT_SCHEMA_NAME,
+        response_schema=COURT_RESPONSE_SCHEMA,
+        max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+        request_headers_fn=_request_headers,
+        extract_content_fn=_extract_content,
+        extract_json_payload_fn=_extract_json_payload,
+        validate_court_payload_fn=_validate_court_payload,
+        attempt_repair_payload_fn=_attempt_repair_payload,
+        apply_model_call_interval_fn=apply_model_call_interval,
+        compute_retry_delay_fn=compute_retry_delay,
+        is_retryable_http_code_fn=is_retryable_http_code,
+        register_rate_limit_cooldown_fn=register_rate_limit_cooldown,
+        request_factory=urllib.request.Request,
+        urlopen_fn=urllib.request.urlopen,
+    )
 
 
 def _call_with_fallback(
@@ -276,42 +176,18 @@ def _call_with_fallback(
     request_timeout: int,
     valid_evidence_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    try:
-        return (
-            _call_model(
-                token=token,
-                endpoint=endpoint,
-                model=model,
-                messages=messages,
-                fallback_label=fallback_label,
-                valid_evidence_ids=valid_evidence_ids,
-                max_retries=max_retries,
-                request_timeout=request_timeout,
-            ),
-            model,
-        )
-    except RuntimeError as primary_err:
-        candidate = (fallback_model or "").strip()
-        if not candidate or candidate == model:
-            raise RuntimeError(str(primary_err)) from primary_err
-        try:
-            return (
-                _call_model(
-                    token=token,
-                    endpoint=endpoint,
-                    model=candidate,
-                    messages=messages,
-                    fallback_label=fallback_label,
-                    valid_evidence_ids=valid_evidence_ids,
-                    max_retries=max_retries,
-                    request_timeout=request_timeout,
-                ),
-                candidate,
-            )
-        except RuntimeError as fallback_err:
-            raise RuntimeError(
-                f"Primary model failed: {primary_err}. Fallback model failed: {fallback_err}."
-            ) from fallback_err
+    return orchestrator_court_transport.call_with_fallback(
+        token=token,
+        endpoint=endpoint,
+        model=model,
+        fallback_model=fallback_model,
+        messages=messages,
+        fallback_label=fallback_label,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+        valid_evidence_ids=valid_evidence_ids,
+        call_model_fn=_call_model,
+    )
 
 
 def run_court_advisory(
