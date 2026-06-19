@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from bumpkin.integrations.github.recommendations import RecommendationRunner
 from bumpkin.release.models import (
@@ -15,11 +15,11 @@ from bumpkin.release.repository_client import GitHubRepositoryClientProtocol
 
 ResolveTargetRefFn = Callable[[str], tuple[str, str]]
 ListTagsFn = Callable[[], list[str]]
-ResolveCurrentTagFn = Callable[[str | None, Sequence[str]], tuple[str | None, list[str]]]
+ResolveCurrentTagFn = Callable[[str | None, list[str]], tuple[str | None, list[str]]]
 DiscoverPullRequestsFn = Callable[..., list[ReleaseScopedPullRequest]]
 AnalyzePullRequestsFn = Callable[..., list[ReleaseRecommendationRecord]]
 AggregateReleaseLabelFn = Callable[[list[ReleaseRecommendationRecord]], str | None]
-RenderPublicReleaseBodyFn = Callable[[Sequence[ReleaseRecommendationRecord]], str]
+RenderPublicReleaseBodyFn = Callable[[list[ReleaseRecommendationRecord]], str]
 RenderPreviewNotesFn = Callable[..., str]
 RenderNoReleasePreviewNotesFn = Callable[..., str]
 DetectNextVersionFn = Callable[[str, str | None], tuple[str | None, str | None, list[str]]]
