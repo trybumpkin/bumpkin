@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 
 from bumpkin.integrations.github.recommendations import (
     PipelineRecommendationRunner,
@@ -37,6 +36,21 @@ from bumpkin.release.output_writers import (
     _write_github_output,
     _write_json_file,
     _write_text_file,
+)
+from bumpkin.release.planning import (
+    aggregate_release_label as _aggregate_release_label_impl,
+)
+from bumpkin.release.planning import (
+    prepare_release_plan as _prepare_release_plan_impl,
+)
+from bumpkin.release.planning import (
+    resolve_target_ref as _resolve_target_ref_impl,
+)
+from bumpkin.release.planning import (
+    run_git as _run_git_impl,
+)
+from bumpkin.release.planning import (
+    verify_release_candidate as _verify_release_candidate_impl,
 )
 from bumpkin.release.publish import publish_release_plan
 from bumpkin.release.rendering import (
@@ -111,28 +125,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _run_git(args: list[str]) -> str:
-    completed = subprocess.run(
-        ["git", *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout.strip()
+    return _run_git_impl(args)
 
 
 def _resolve_target_ref(input_target_ref: str) -> tuple[str, str]:
-    target_ref = input_target_ref.strip()
-    if target_ref:
-        try:
-            target_sha = _run_git(["rev-parse", target_ref])
-        except (RuntimeError, subprocess.CalledProcessError):
-            target_sha = target_ref
-        return target_ref, target_sha
-    try:
-        target_sha = _run_git(["rev-parse", "HEAD"])
-    except (RuntimeError, subprocess.CalledProcessError) as err:
-        raise RuntimeError("Unable to resolve HEAD for release target.") from err
-    return target_sha, target_sha
+    return _resolve_target_ref_impl(input_target_ref, run_git_fn=_run_git)
 
 
 def _verify_release_candidate(
@@ -143,91 +140,29 @@ def _verify_release_candidate(
     base_tag: str,
     client: GitHubRepositoryClientProtocol,
 ) -> ReleasePlan:
-    normalized_repository = repository.strip()
-    if candidate.repository != normalized_repository:
-        raise RuntimeError(
-            "Release candidate does not belong to this repository. Run release_preview again."
-        )
-    normalized_base_tag = base_tag.strip()
-    if candidate.base_tag_input != normalized_base_tag:
-        raise RuntimeError(
-            "Release candidate was created with a different base_tag input. Run release_preview again."
-        )
-
-    resolved_target_ref, target_sha = _resolve_target_ref(target_ref)
-    if candidate.target_sha != target_sha:
-        raise RuntimeError(
-            "Release candidate is stale because the target commit changed since preview."
-        )
-
-    candidate_tags = list_tags()
-    if not candidate_tags:
-        candidate_tags = client.list_tags()
-    previous_tag, _ = resolve_current_tag(
-        latest_tag=normalized_base_tag or None,
-        tags=candidate_tags,
-    )
-    if previous_tag != candidate.previous_tag:
-        raise RuntimeError(
-            "Release candidate is stale because the previous tag changed since preview."
-        )
-    if previous_tag is None:
-        raise RuntimeError(
-            "No previous tag found for this publish run. Create an initial release tag or run release_preview again."
-        )
-
-    current_pull_requests = _discover_pull_requests(
+    return _verify_release_candidate_impl(
+        candidate=candidate,
+        repository=repository,
+        target_ref=target_ref,
+        base_tag=base_tag,
         client=client,
-        base_ref=previous_tag,
-        head_ref=resolved_target_ref,
-    )
-    current_fingerprint = _candidate_fingerprint(
-        _candidate_fingerprint_payload(
-            repository=normalized_repository,
-            target_ref=resolved_target_ref,
-            target_sha=target_sha,
-            base_tag_input=normalized_base_tag,
-            previous_tag=previous_tag,
-            next_tag=candidate.next_tag,
-            release_label=candidate.release_label,
-            status=candidate.status,
-            pull_requests=current_pull_requests,
-            preview_notes=candidate.preview_notes,
-            published_release_body=candidate.published_release_body,
-        )
-    )
-    if current_fingerprint != candidate.fingerprint:
-        raise RuntimeError(
-            "Release candidate is stale because the release scope changed since preview."
-        )
-
-    return ReleasePlan(
-        repository=candidate.repository,
-        target_ref=resolved_target_ref,
-        target_sha=target_sha,
-        previous_tag=candidate.previous_tag,
-        next_tag=candidate.next_tag,
-        release_label=candidate.release_label,
-        pull_requests=tuple(current_pull_requests),
-        recommendations=(),
-        preview_notes=candidate.preview_notes,
-        published_release_body=candidate.published_release_body,
-        notes=candidate.notes,
-        status=candidate.status,
+        resolve_target_ref_fn=_resolve_target_ref,
+        list_tags_fn=list_tags,
+        resolve_current_tag_fn=lambda latest_tag, tags: resolve_current_tag(
+            latest_tag=latest_tag,
+            tags=tags,
+        ),
+        discover_pull_requests_fn=_discover_pull_requests,
+        candidate_fingerprint_fn=_candidate_fingerprint,
+        candidate_fingerprint_payload_fn=_candidate_fingerprint_payload,
     )
 
 
 def _aggregate_release_label(recommendations: list[ReleaseRecommendationRecord]) -> str | None:
-    best_label: str | None = None
-    best_rank = -1
-    for record in recommendations:
-        if record.status != "classified" or not record.label:
-            continue
-        rank = _LABEL_PRECEDENCE.get(record.label, -1)
-        if rank > best_rank:
-            best_rank = rank
-            best_label = record.label
-    return best_label
+    return _aggregate_release_label_impl(
+        recommendations,
+        label_precedence=_LABEL_PRECEDENCE,
+    )
 
 
 def prepare_release_plan(
@@ -239,142 +174,32 @@ def prepare_release_plan(
     client: GitHubRepositoryClientProtocol,
     recommendation_runner: RecommendationRunner | None = None,
 ) -> ReleasePlan:
-    normalized_repository = repository.strip()
-    if not normalized_repository:
-        raise ValueError("repository is required.")
-    normalized_token = github_token.strip()
-    if not normalized_token:
-        raise ValueError("github token is required.")
-    resolved_target_ref, target_sha = _resolve_target_ref(target_ref)
-    notes: list[str] = []
-    candidate_tags = list_tags()
-    if not candidate_tags:
-        candidate_tags = client.list_tags()
-    previous_tag, current_tag_notes = resolve_current_tag(
-        latest_tag=base_tag.strip() or None,
-        tags=candidate_tags,
-    )
-    notes.extend(current_tag_notes)
-    if previous_tag is None:
-        raise RuntimeError(
-            "No previous tag found. Create an initial release tag or pass --base-tag."
-        )
-
-    pull_requests = _discover_pull_requests(
+    return _prepare_release_plan_impl(
+        repository=repository,
+        github_token=github_token,
+        target_ref=target_ref,
+        base_tag=base_tag,
         client=client,
-        base_ref=previous_tag,
-        head_ref=resolved_target_ref,
-    )
-    if not pull_requests:
-        return ReleasePlan(
-            status="skipped",
-            repository=normalized_repository,
-            target_ref=resolved_target_ref,
-            target_sha=target_sha,
-            previous_tag=previous_tag,
-            next_tag=None,
-            release_label=None,
-            pull_requests=(),
-            recommendations=(),
-            preview_notes=(
-                f"# Release Preview\n\nPrevious tag: {previous_tag}\nIncluded PRs: 0\n\n"
-                "No merged pull requests were found in this release scope.\n"
-            ),
-            published_release_body="",
-            notes=tuple(notes),
-        )
-
-    runner = recommendation_runner or PipelineRecommendationRunner()
-    recommendations = _analyze_pull_requests(
-        pull_requests=pull_requests,
-        recommendation_runner=runner,
-        github_token=normalized_token,
+        recommendation_runner=recommendation_runner,
+        resolve_target_ref_fn=_resolve_target_ref,
+        list_tags_fn=list_tags,
+        resolve_current_tag_fn=lambda latest_tag, tags: resolve_current_tag(
+            latest_tag=latest_tag,
+            tags=tags,
+        ),
+        discover_pull_requests_fn=_discover_pull_requests,
+        analyze_pull_requests_fn=_analyze_pull_requests,
+        aggregate_release_label_fn=_aggregate_release_label,
+        detect_next_version_fn=lambda release_label, latest_tag: detect_next_version(
+            release_label,
+            latest_tag=latest_tag,
+        ),
+        render_public_release_body_fn=_render_public_release_body,
+        render_preview_notes_fn=_render_preview_notes,
+        render_no_release_preview_notes_fn=_render_no_release_preview_notes,
+        recommendation_runner_factory=PipelineRecommendationRunner,
         summary_line_re=_SUMMARY_LINE_RE,
         reasoning_line_re=_REASONING_LINE_RE,
-    )
-    unresolved_records = [record for record in recommendations if record.status != "classified"]
-    release_label = _aggregate_release_label(recommendations)
-    if release_label is None and unresolved_records:
-        notes.append(
-            "Release scope contains unresolved pull requests that need review before publish."
-        )
-        published_release_body = _render_public_release_body(recommendations)
-        preview_notes = _render_preview_notes(
-            target_sha=target_sha,
-            previous_tag=previous_tag,
-            next_tag=None,
-            release_label=None,
-            recommendations=recommendations,
-            notes=notes,
-            published_release_body=published_release_body,
-        )
-        return ReleasePlan(
-            status="needs_review",
-            repository=normalized_repository,
-            target_ref=resolved_target_ref,
-            target_sha=target_sha,
-            previous_tag=previous_tag,
-            next_tag=None,
-            release_label=None,
-            pull_requests=tuple(pull_requests),
-            recommendations=tuple(recommendations),
-            preview_notes=preview_notes,
-            published_release_body="",
-            notes=tuple(notes),
-        )
-    if release_label is None:
-        raise RuntimeError("Could not determine an aggregate release label.")
-    _, next_tag, version_notes = detect_next_version(release_label, latest_tag=previous_tag)
-    notes.extend(version_notes)
-    if release_label == "NO_BUMP":
-        notes.append(
-            "Release scope resolved to NO_BUMP; no tag or GitHub Release will be published."
-        )
-        preview_notes = _render_no_release_preview_notes(
-            previous_tag=previous_tag,
-            release_label=release_label,
-            recommendations=recommendations,
-            notes=notes,
-        )
-        return ReleasePlan(
-            status="skipped",
-            repository=normalized_repository,
-            target_ref=resolved_target_ref,
-            target_sha=target_sha,
-            previous_tag=previous_tag,
-            next_tag=None,
-            release_label=release_label,
-            pull_requests=tuple(pull_requests),
-            recommendations=tuple(recommendations),
-            preview_notes=preview_notes,
-            published_release_body="",
-            notes=tuple(notes),
-        )
-    if not next_tag:
-        raise RuntimeError("Could not compute the next release tag from the current scope.")
-    published_release_body = _render_public_release_body(recommendations)
-    preview_notes = _render_preview_notes(
-        target_sha=target_sha,
-        previous_tag=previous_tag,
-        next_tag=next_tag,
-        release_label=release_label,
-        recommendations=recommendations,
-        notes=notes,
-        published_release_body=published_release_body,
-    )
-    return ReleasePlan(
-        status="planned",
-        repository=normalized_repository,
-        target_ref=resolved_target_ref,
-        target_sha=target_sha,
-        previous_tag=previous_tag,
-        next_tag=next_tag,
-        release_label=release_label,
-        pull_requests=tuple(pull_requests),
-        recommendations=tuple(recommendations),
-        preview_notes=preview_notes,
-        published_release_body=published_release_body,
-        notes=tuple(notes),
     )
 
 
