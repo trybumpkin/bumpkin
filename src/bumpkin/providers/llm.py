@@ -19,7 +19,9 @@ from bumpkin.providers.chunking import (
 from bumpkin.providers.llm_payloads import (
     AGGREGATE_CHANGELOG,
     VALID_LABELS,
-    LLMResponseError,
+)
+from bumpkin.providers.llm_payloads import (
+    LLMResponseError as _LLMResponseError_impl,
 )
 from bumpkin.providers.llm_payloads import (
     coerce_recommendation_payload as _coerce_recommendation_payload_impl,
@@ -38,6 +40,12 @@ from bumpkin.providers.llm_payloads import (
 )
 from bumpkin.providers.llm_payloads import (
     validate_recommendation as _validate_recommendation_impl,
+)
+from bumpkin.providers.llm_recommend import (
+    run_chunked_recommendation as _run_chunked_recommendation_impl,
+)
+from bumpkin.providers.llm_recommend import (
+    run_single_shot_recommendation as _run_single_shot_recommendation_impl,
 )
 from bumpkin.providers.llm_transport import (
     LLMUnavailableError,
@@ -71,6 +79,8 @@ from bumpkin.providers.semantic import (
 )
 
 LABEL_PRIORITY = {"NO_BUMP": 0, "PATCH": 1, "MINOR": 2, "MAJOR": 3}
+
+LLMResponseError = _LLMResponseError_impl
 
 
 def _provider_mode_for_endpoint(endpoint: str) -> str:
@@ -281,57 +291,6 @@ def _call_github_models(
     return validate_recommendation(_coerce_recommendation_payload(parsed))
 
 
-def _call_chunk_with_fallback(
-    *,
-    token: str,
-    model: str,
-    fallback_model: str | None,
-    chunk_diff: str,
-    language_group: str | None,
-    prompt_version: str | None,
-    surface_area_hints: list[str] | None,
-    language_hints: list[str] | None,
-    endpoint: str,
-    max_retries: int,
-    request_timeout: int,
-) -> tuple[dict[str, str], str]:
-    try:
-        recommendation = _call_github_models(
-            token=token,
-            model=model,
-            diff_text=chunk_diff,
-            language_group=language_group,
-            prompt_version=prompt_version,
-            surface_area_hints=surface_area_hints,
-            language_hints=language_hints,
-            endpoint=endpoint,
-            max_retries=max_retries,
-            request_timeout=request_timeout,
-        )
-        return recommendation, model
-    except LLMUnavailableError as primary_err:
-        if fallback_model and fallback_model.strip() and fallback_model != model:
-            try:
-                recommendation = _call_github_models(
-                    token=token,
-                    model=fallback_model,
-                    diff_text=chunk_diff,
-                    language_group=language_group,
-                    prompt_version=prompt_version,
-                    surface_area_hints=surface_area_hints,
-                    language_hints=language_hints,
-                    endpoint=endpoint,
-                    max_retries=max_retries,
-                    request_timeout=request_timeout,
-                )
-                return recommendation, fallback_model
-            except (LLMUnavailableError, LLMResponseError) as fallback_err:
-                raise LLMUnavailableError(
-                    f"Primary model failed: {primary_err}. Fallback model failed: {fallback_err}."
-                ) from fallback_err
-        raise LLMUnavailableError(str(primary_err)) from primary_err
-
-
 def get_recommendation(
     mode: str,
     diff_text: str,
@@ -382,138 +341,33 @@ def get_recommendation(
     files_total = len(known_files)
     single_shot_omitted_files = known_files if truncated else []
 
-    def _single_shot() -> tuple[dict[str, Any], str, str | None, str | None]:
-        try:
-            recommendation = _call_chunk_with_fallback(
-                token=token,
-                model=model,
-                fallback_model=fallback_model,
-                chunk_diff=diff_text,
-                language_group=prompt_metadata.language_group,
-                prompt_version=prompt_metadata.prompt_version,
-                surface_area_hints=surface_area_hints,
-                language_hints=language_hints,
-                endpoint=endpoint,
-                max_retries=max_retries,
-                request_timeout=request_timeout,
-            )
-            parsed, used_model = recommendation
-            if truncated:
-                parsed["reasoning"] += " (diff truncated; review manually)"
-            result = _classified_result(
-                label=parsed["label"],
-                confidence=parsed["confidence"],
-                reasoning=parsed["reasoning"],
-                changelog=parsed["changelog"],
-            )
-            result = _with_chunking_metadata(
-                result,
-                enabled=False,
-                chunk_count=1,
-                succeeded=1,
-                failed=0,
-                skipped=0,
-                max_chunk_tokens=chunk_max_tokens,
-                max_chunk_count=chunk_max_count,
-                failure_policy=normalized_chunk_failure_policy,
-                files_total=files_total,
-                omitted_files=single_shot_omitted_files,
-            )
-            return result, model_mode, None, used_model
-        except LLMUnavailableError as err:
-            if use_semantic_fallback:
-                fallback_result = _semantic_fallback_recommendation(
-                    diff_text=diff_text,
-                    surface_area_hints=surface_area_hints,
-                    truncated=truncated,
-                )
-                fallback_result = _with_chunking_metadata(
-                    fallback_result,
-                    enabled=False,
-                    chunk_count=1,
-                    succeeded=0,
-                    failed=1,
-                    skipped=0,
-                    max_chunk_tokens=chunk_max_tokens,
-                    max_chunk_count=chunk_max_count,
-                    failure_policy=normalized_chunk_failure_policy,
-                    files_total=files_total,
-                    omitted_files=known_files,
-                )
-                return (
-                    fallback_result,
-                    "fallback-heuristic",
-                    str(err),
-                    "semantic-fallback",
-                )
-            manual = _manual_review_result(
-                reasoning=(
-                    "Automatic model analysis was unavailable. Please classify this PR manually."
-                )
-            )
-            manual = _with_chunking_metadata(
-                manual,
-                enabled=False,
-                chunk_count=1,
-                succeeded=0,
-                failed=1,
-                skipped=0,
-                max_chunk_tokens=chunk_max_tokens,
-                max_chunk_count=chunk_max_count,
-                failure_policy=normalized_chunk_failure_policy,
-                files_total=files_total,
-                omitted_files=known_files,
-            )
-            return manual, model_mode, str(err), None
-        except LLMResponseError as err:
-            if use_semantic_fallback:
-                fallback_result = _semantic_fallback_recommendation(
-                    diff_text=diff_text,
-                    surface_area_hints=surface_area_hints,
-                    truncated=truncated,
-                )
-                fallback_result = _with_chunking_metadata(
-                    fallback_result,
-                    enabled=False,
-                    chunk_count=1,
-                    succeeded=0,
-                    failed=1,
-                    skipped=0,
-                    max_chunk_tokens=chunk_max_tokens,
-                    max_chunk_count=chunk_max_count,
-                    failure_policy=normalized_chunk_failure_policy,
-                    files_total=files_total,
-                    omitted_files=known_files,
-                )
-                return (
-                    fallback_result,
-                    "fallback-heuristic",
-                    str(err),
-                    "semantic-fallback",
-                )
-            manual = _manual_review_result(
-                reasoning=(
-                    "Automatic model analysis returned an invalid response. "
-                    "Please classify this PR manually."
-                )
-            )
-            manual = _with_chunking_metadata(
-                manual,
-                enabled=False,
-                chunk_count=1,
-                succeeded=0,
-                failed=1,
-                skipped=0,
-                max_chunk_tokens=chunk_max_tokens,
-                max_chunk_count=chunk_max_count,
-                failure_policy=normalized_chunk_failure_policy,
-                files_total=files_total,
-                omitted_files=known_files,
-            )
-            return manual, model_mode, str(err), None
-
     if not chunking_enabled:
-        return _single_shot()
+        return _run_single_shot_recommendation_impl(
+            call_model_fn=_call_github_models,
+            classified_result_fn=_classified_result,
+            manual_review_result_fn=_manual_review_result,
+            semantic_fallback_fn=_semantic_fallback_recommendation,
+            with_chunking_metadata_fn=_with_chunking_metadata,
+            token=token,
+            model=model,
+            fallback_model=fallback_model,
+            diff_text=diff_text,
+            language_group=prompt_metadata.language_group,
+            prompt_version=prompt_metadata.prompt_version,
+            surface_area_hints=surface_area_hints,
+            language_hints=language_hints,
+            endpoint=endpoint,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
+            truncated=truncated,
+            use_semantic_fallback=use_semantic_fallback,
+            model_mode=model_mode,
+            chunk_max_tokens=chunk_max_tokens,
+            chunk_max_count=chunk_max_count,
+            failure_policy=normalized_chunk_failure_policy,
+            files_total=files_total,
+            omitted_files=single_shot_omitted_files,
+        )
 
     chunk_payloads: list[dict[str, Any]]
     skipped_chunks: int
@@ -538,162 +392,59 @@ def get_recommendation(
         omitted_due_to_chunk_limit = set()
 
     if not chunk_payloads:
-        return _single_shot()
-
-    successful: list[dict[str, str]] = []
-    chunk_errors: list[str] = []
-    models_used: list[str] = []
-    covered_files: set[str] = set()
-    failed_files: set[str] = set()
-    for chunk in chunk_payloads:
-        chunk_text = str(chunk["text"])
-        chunk_files = set(chunk["files"])
-        try:
-            parsed, used_model = _call_chunk_with_fallback(
-                token=token,
-                model=model,
-                fallback_model=fallback_model,
-                chunk_diff=chunk_text,
-                language_group=prompt_metadata.language_group,
-                prompt_version=prompt_metadata.prompt_version,
-                surface_area_hints=surface_area_hints,
-                language_hints=language_hints,
-                endpoint=endpoint,
-                max_retries=max_retries,
-                request_timeout=request_timeout,
-            )
-            successful.append(parsed)
-            models_used.append(used_model)
-            covered_files.update(chunk_files)
-        except (LLMUnavailableError, LLMResponseError) as err:
-            chunk_errors.append(str(err))
-            failed_files.update(chunk_files)
-
-    chunk_count = len(chunk_payloads)
-    success_count = len(successful)
-    failed_count = len(chunk_errors)
-    omitted_files_set = (
-        (all_chunk_files - covered_files) | omitted_due_to_chunk_limit | failed_files
-    )
-    omitted_files = sorted(omitted_files_set)
-    files_total_for_metadata = len(all_chunk_files)
-    if omitted_due_to_chunk_limit:
-        manual = _manual_review_result(
-            reasoning=(
-                "Chunked model analysis omitted one or more files because chunk limits were reached. "
-                "Please review manually."
-            )
-        )
-        manual = _with_chunking_metadata(
-            manual,
-            enabled=True,
-            chunk_count=chunk_count,
-            succeeded=success_count,
-            failed=failed_count,
-            skipped=skipped_chunks,
-            max_chunk_tokens=chunk_max_tokens,
-            max_chunk_count=chunk_max_count,
-            failure_policy=normalized_chunk_failure_policy,
-            files_total=files_total_for_metadata,
-            omitted_files=omitted_files,
-        )
-        return manual, model_mode, "chunk_limit_coverage_gap", "mixed"
-
-    if failed_count == 0:
-        aggregated = _aggregate_chunk_recommendations(
-            successful,
+        return _run_single_shot_recommendation_impl(
+            call_model_fn=_call_github_models,
+            classified_result_fn=_classified_result,
+            manual_review_result_fn=_manual_review_result,
+            semantic_fallback_fn=_semantic_fallback_recommendation,
+            with_chunking_metadata_fn=_with_chunking_metadata,
+            token=token,
+            model=model,
+            fallback_model=fallback_model,
+            diff_text=diff_text,
+            language_group=prompt_metadata.language_group,
+            prompt_version=prompt_metadata.prompt_version,
+            surface_area_hints=surface_area_hints,
+            language_hints=language_hints,
+            endpoint=endpoint,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
             truncated=truncated,
-        )
-        aggregated = _with_chunking_metadata(
-            aggregated,
-            enabled=True,
-            chunk_count=chunk_count,
-            succeeded=success_count,
-            failed=failed_count,
-            skipped=skipped_chunks,
-            max_chunk_tokens=chunk_max_tokens,
-            max_chunk_count=chunk_max_count,
+            use_semantic_fallback=use_semantic_fallback,
+            model_mode=model_mode,
+            chunk_max_tokens=chunk_max_tokens,
+            chunk_max_count=chunk_max_count,
             failure_policy=normalized_chunk_failure_policy,
-            files_total=files_total_for_metadata,
-            omitted_files=omitted_files,
+            files_total=files_total,
+            omitted_files=single_shot_omitted_files,
         )
-        model_used = models_used[0] if len(set(models_used)) == 1 else "mixed"
-        return aggregated, model_mode, None, model_used
 
-    fallback_reason = "; ".join(chunk_errors[:2])
-    if success_count == 0:
-        if use_semantic_fallback:
-            fallback_result = _semantic_fallback_recommendation(
-                diff_text=diff_text,
-                surface_area_hints=surface_area_hints,
-                truncated=truncated,
-            )
-            fallback_result = _with_chunking_metadata(
-                fallback_result,
-                enabled=True,
-                chunk_count=chunk_count,
-                succeeded=success_count,
-                failed=failed_count,
-                skipped=skipped_chunks,
-                max_chunk_tokens=chunk_max_tokens,
-                max_chunk_count=chunk_max_count,
-                failure_policy=normalized_chunk_failure_policy,
-                files_total=files_total_for_metadata,
-                omitted_files=omitted_files,
-            )
-            return (
-                fallback_result,
-                "fallback-heuristic",
-                fallback_reason,
-                "semantic-fallback",
-            )
-        manual = _manual_review_result(
-            reasoning=(
-                "Chunked model analysis failed for all chunks. Please classify this PR manually."
-            )
-        )
-        manual = _with_chunking_metadata(
-            manual,
-            enabled=True,
-            chunk_count=chunk_count,
-            succeeded=success_count,
-            failed=failed_count,
-            skipped=skipped_chunks,
-            max_chunk_tokens=chunk_max_tokens,
-            max_chunk_count=chunk_max_count,
-            failure_policy=normalized_chunk_failure_policy,
-            files_total=files_total_for_metadata,
-            omitted_files=omitted_files,
-        )
-        return manual, model_mode, fallback_reason, None
-
-    reasoning = (
-        f"Chunked model analysis succeeded for {success_count}/{chunk_count} chunk(s), "
-        f"but {failed_count} chunk(s) failed; reliable aggregate classification is unavailable."
-    )
-    if truncated:
-        reasoning += " Diff was truncated before chunking."
-    if normalized_chunk_failure_policy == "PATCH":
-        partial = _classified_result(
-            label="PATCH",
-            confidence="low",
-            reasoning=reasoning,
-            changelog="fix: conservative patch bump due to partial chunk failures",
-        )
-    else:
-        partial = _manual_review_result(reasoning=reasoning)
-
-    partial = _with_chunking_metadata(
-        partial,
-        enabled=True,
-        chunk_count=chunk_count,
-        succeeded=success_count,
-        failed=failed_count,
-        skipped=skipped_chunks,
-        max_chunk_tokens=chunk_max_tokens,
-        max_chunk_count=chunk_max_count,
+    return _run_chunked_recommendation_impl(
+        call_model_fn=_call_github_models,
+        aggregate_chunk_recommendations_fn=_aggregate_chunk_recommendations,
+        classified_result_fn=_classified_result,
+        manual_review_result_fn=_manual_review_result,
+        semantic_fallback_fn=_semantic_fallback_recommendation,
+        with_chunking_metadata_fn=_with_chunking_metadata,
+        token=token,
+        model=model,
+        fallback_model=fallback_model,
+        diff_text=diff_text,
+        chunk_payloads=chunk_payloads,
+        skipped_chunks=skipped_chunks,
+        all_chunk_files=all_chunk_files,
+        omitted_due_to_chunk_limit=omitted_due_to_chunk_limit,
+        language_group=prompt_metadata.language_group,
+        prompt_version=prompt_metadata.prompt_version,
+        surface_area_hints=surface_area_hints,
+        language_hints=language_hints,
+        endpoint=endpoint,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+        truncated=truncated,
+        use_semantic_fallback=use_semantic_fallback,
+        model_mode=model_mode,
+        chunk_max_tokens=chunk_max_tokens,
+        chunk_max_count=chunk_max_count,
         failure_policy=normalized_chunk_failure_policy,
-        files_total=files_total_for_metadata,
-        omitted_files=omitted_files,
     )
-    return partial, model_mode, fallback_reason, "mixed"
