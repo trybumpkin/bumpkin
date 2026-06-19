@@ -3,6 +3,7 @@ from __future__ import annotations
 import urllib.request
 from typing import Any
 
+from bumpkin.orchestrator import court_advisory as orchestrator_court_advisory
 from bumpkin.orchestrator import court_messages as orchestrator_court_messages
 from bumpkin.orchestrator import court_transport as orchestrator_court_transport
 from bumpkin.orchestrator.court_payload import (
@@ -203,114 +204,18 @@ def run_court_advisory(
     case_file_text: str,
     language_hints: list[str] | None = None,
 ) -> tuple[dict[str, Any], str | None, str | None]:
-    if not engine_label:
-        return (
-            {
-                "status": "skipped",
-                "label": None,
-                "confidence": None,
-                "judge_summary": "Court advisory skipped because no deterministic classification was available.",
-                "prosecutor_claims": [],
-                "defender_claims": [],
-                "accepted_arguments": [],
-                "rejected_arguments": [],
-                "unresolved_risks": [],
-                "accepted_evidence_ids": [],
-                "rejected_evidence_ids": [],
-                "disagreement_reason": None,
-            },
-            None,
-            None,
-        )
-
-    normalized_mode = mode.strip().lower()
-    if normalized_mode == "stub":
-        return (
-            {
-                "status": "aligned",
-                "label": engine_label,
-                "confidence": "high",
-                "judge_summary": "Stub court advisory mirrors deterministic decision.",
-                "prosecutor_claims": [
-                    "Stub prosecutor: deterministic evidence indicates the selected impact."
-                ],
-                "defender_claims": ["Stub defender: no contradictory evidence in stub mode."],
-                "accepted_arguments": ["Deterministic evidence chain is accepted in stub mode."],
-                "rejected_arguments": [],
-                "unresolved_risks": [],
-                "accepted_evidence_ids": [],
-                "rejected_evidence_ids": [],
-                "disagreement_reason": None,
-            },
-            None,
-            "stub",
-        )
-
-    if not token:
-        return (
-            {
-                "status": "degraded",
-                "label": None,
-                "confidence": None,
-                "judge_summary": "Court advisory degraded because no model token was available.",
-                "prosecutor_claims": [],
-                "defender_claims": [],
-                "accepted_arguments": [],
-                "rejected_arguments": [],
-                "unresolved_risks": [],
-                "accepted_evidence_ids": [],
-                "rejected_evidence_ids": [],
-                "disagreement_reason": None,
-            },
-            "missing_model_token",
-            None,
-        )
-
-    messages = build_court_messages(
-        case_file_text=case_file_text,
+    return orchestrator_court_advisory.run_court_advisory(
+        mode=mode,
+        model=model,
+        fallback_model=fallback_model,
+        endpoint=endpoint,
+        token=token,
+        max_retries=max_retries,
+        request_timeout=request_timeout,
         engine_label=engine_label,
+        case_file_text=case_file_text,
         language_hints=language_hints,
+        build_court_messages_fn=build_court_messages,
+        extract_case_file_evidence_ids_fn=_extract_case_file_evidence_ids,
+        call_with_fallback_fn=_call_with_fallback,
     )
-    valid_evidence_ids = _extract_case_file_evidence_ids(case_file_text)
-    try:
-        parsed, used_model = _call_with_fallback(
-            token=token,
-            endpoint=endpoint,
-            model=model,
-            fallback_model=fallback_model,
-            messages=messages,
-            fallback_label=engine_label,
-            valid_evidence_ids=valid_evidence_ids,
-            max_retries=max_retries,
-            request_timeout=request_timeout,
-        )
-    except RuntimeError as err:
-        return (
-            {
-                "status": "degraded",
-                "label": None,
-                "confidence": None,
-                "judge_summary": "Court advisory degraded because the provider call failed.",
-                "prosecutor_claims": [],
-                "defender_claims": [],
-                "accepted_arguments": [],
-                "rejected_arguments": [],
-                "unresolved_risks": [],
-                "accepted_evidence_ids": [],
-                "rejected_evidence_ids": [],
-                "disagreement_reason": None,
-            },
-            str(err),
-            None,
-        )
-
-    if parsed["label"] == engine_label:
-        parsed["status"] = "aligned"
-        parsed["disagreement_reason"] = None
-        return parsed, None, used_model
-
-    parsed["status"] = "manual_review"
-    parsed["disagreement_reason"] = (
-        f"Court verdict {parsed['label']} disagreed with deterministic decision {engine_label}."
-    )
-    return parsed, None, used_model
