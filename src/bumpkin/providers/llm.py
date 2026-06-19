@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from bumpkin.prompt_pack import build_messages as build_prompt_messages
-from bumpkin.prompt_pack import get_prompt_metadata
 from bumpkin.providers.chunking import (
     aggregate_chunk_recommendations as _aggregate_chunk_recommendations_impl,
 )
@@ -42,10 +41,7 @@ from bumpkin.providers.llm_payloads import (
     validate_recommendation as _validate_recommendation_impl,
 )
 from bumpkin.providers.llm_recommend import (
-    run_chunked_recommendation as _run_chunked_recommendation_impl,
-)
-from bumpkin.providers.llm_recommend import (
-    run_single_shot_recommendation as _run_single_shot_recommendation_impl,
+    get_recommendation as _get_recommendation_impl,
 )
 from bumpkin.providers.llm_transport import (
     LLMUnavailableError,
@@ -312,139 +308,34 @@ def get_recommendation(
     chunk_failure_policy: str = "MANUAL_REVIEW",
     diff_units: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], str, str | None, str | None]:
-    normalized_mode = mode.strip().lower()
-    if normalized_mode not in {"auto", "stub", "github-models", "openrouter"}:
-        raise ValueError(f"Unsupported mode: {mode!r}")
-
-    if normalized_mode == "stub":
-        return get_stub_recommendation(truncated), "stub", None, "stub"
-
-    model_mode = (
-        "openrouter" if normalized_mode == "openrouter" else _provider_mode_for_endpoint(endpoint)
-    )
-
-    prompt_metadata = get_prompt_metadata(
-        language_group=language_group,
-        prompt_version=prompt_version,
-    )
-
-    normalized_chunk_failure_policy = chunk_failure_policy.strip().upper()
-    if normalized_chunk_failure_policy not in {"MANUAL_REVIEW", "PATCH"}:
-        raise ValueError(f"Unsupported chunk_failure_policy: {chunk_failure_policy!r}")
-
-    normalized_units = [
-        (str(path).strip(), text)
-        for path, text in (diff_units or [])
-        if str(path or "").strip() and str(text or "").strip()
-    ]
-    known_files = sorted({path for path, _ in normalized_units})
-    files_total = len(known_files)
-    single_shot_omitted_files = known_files if truncated else []
-
-    if not chunking_enabled:
-        return _run_single_shot_recommendation_impl(
-            call_model_fn=_call_github_models,
-            classified_result_fn=_classified_result,
-            manual_review_result_fn=_manual_review_result,
-            semantic_fallback_fn=_semantic_fallback_recommendation,
-            with_chunking_metadata_fn=_with_chunking_metadata,
-            token=token,
-            model=model,
-            fallback_model=fallback_model,
-            diff_text=diff_text,
-            language_group=prompt_metadata.language_group,
-            prompt_version=prompt_metadata.prompt_version,
-            surface_area_hints=surface_area_hints,
-            language_hints=language_hints,
-            endpoint=endpoint,
-            max_retries=max_retries,
-            request_timeout=request_timeout,
-            truncated=truncated,
-            use_semantic_fallback=use_semantic_fallback,
-            model_mode=model_mode,
-            chunk_max_tokens=chunk_max_tokens,
-            chunk_max_count=chunk_max_count,
-            failure_policy=normalized_chunk_failure_policy,
-            files_total=files_total,
-            omitted_files=single_shot_omitted_files,
-        )
-
-    chunk_payloads: list[dict[str, Any]]
-    skipped_chunks: int
-    omitted_due_to_chunk_limit: set[str]
-    all_chunk_files: set[str]
-    if normalized_units:
-        chunk_payloads, skipped_chunks, all_chunk_files, omitted_due_to_chunk_limit = (
-            _split_diff_units_into_chunks(
-                normalized_units,
-                max_chunk_tokens=chunk_max_tokens,
-                max_chunk_count=chunk_max_count,
-            )
-        )
-    else:
-        chunks, skipped_chunks = _split_diff_into_chunks(
-            diff_text,
-            max_chunk_tokens=chunk_max_tokens,
-            max_chunk_count=chunk_max_count,
-        )
-        chunk_payloads = [{"text": chunk, "files": set()} for chunk in chunks]
-        all_chunk_files = set()
-        omitted_due_to_chunk_limit = set()
-
-    if not chunk_payloads:
-        return _run_single_shot_recommendation_impl(
-            call_model_fn=_call_github_models,
-            classified_result_fn=_classified_result,
-            manual_review_result_fn=_manual_review_result,
-            semantic_fallback_fn=_semantic_fallback_recommendation,
-            with_chunking_metadata_fn=_with_chunking_metadata,
-            token=token,
-            model=model,
-            fallback_model=fallback_model,
-            diff_text=diff_text,
-            language_group=prompt_metadata.language_group,
-            prompt_version=prompt_metadata.prompt_version,
-            surface_area_hints=surface_area_hints,
-            language_hints=language_hints,
-            endpoint=endpoint,
-            max_retries=max_retries,
-            request_timeout=request_timeout,
-            truncated=truncated,
-            use_semantic_fallback=use_semantic_fallback,
-            model_mode=model_mode,
-            chunk_max_tokens=chunk_max_tokens,
-            chunk_max_count=chunk_max_count,
-            failure_policy=normalized_chunk_failure_policy,
-            files_total=files_total,
-            omitted_files=single_shot_omitted_files,
-        )
-
-    return _run_chunked_recommendation_impl(
+    return _get_recommendation_impl(
+        provider_mode_for_endpoint_fn=_provider_mode_for_endpoint,
+        get_stub_recommendation_fn=get_stub_recommendation,
+        split_diff_units_into_chunks_fn=_split_diff_units_into_chunks,
+        split_diff_into_chunks_fn=_split_diff_into_chunks,
         call_model_fn=_call_github_models,
         aggregate_chunk_recommendations_fn=_aggregate_chunk_recommendations,
         classified_result_fn=_classified_result,
         manual_review_result_fn=_manual_review_result,
         semantic_fallback_fn=_semantic_fallback_recommendation,
         with_chunking_metadata_fn=_with_chunking_metadata,
-        token=token,
-        model=model,
-        fallback_model=fallback_model,
+        mode=mode,
         diff_text=diff_text,
-        chunk_payloads=chunk_payloads,
-        skipped_chunks=skipped_chunks,
-        all_chunk_files=all_chunk_files,
-        omitted_due_to_chunk_limit=omitted_due_to_chunk_limit,
-        language_group=prompt_metadata.language_group,
-        prompt_version=prompt_metadata.prompt_version,
+        truncated=truncated,
+        language_group=language_group,
+        prompt_version=prompt_version,
         surface_area_hints=surface_area_hints,
         language_hints=language_hints,
+        model=model,
+        fallback_model=fallback_model,
         endpoint=endpoint,
+        token=token,
+        use_semantic_fallback=use_semantic_fallback,
         max_retries=max_retries,
         request_timeout=request_timeout,
-        truncated=truncated,
-        use_semantic_fallback=use_semantic_fallback,
-        model_mode=model_mode,
+        chunking_enabled=chunking_enabled,
         chunk_max_tokens=chunk_max_tokens,
         chunk_max_count=chunk_max_count,
-        failure_policy=normalized_chunk_failure_policy,
+        chunk_failure_policy=chunk_failure_policy,
+        diff_units=diff_units,
     )
