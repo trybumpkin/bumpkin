@@ -15,11 +15,7 @@ from bumpkin.integrations.github.ingress import (
     InMemoryDeliveryStore,
     ingest_webhook_event,
 )
-from bumpkin.integrations.github.persistence import (
-    AppStateStore,
-    EphemeralAppStateStore,
-    build_app_state_store,
-)
+from bumpkin.integrations.github.persistence import AppStateStore
 from bumpkin.integrations.github.reactions import (
     GitHubIssueCommentPublisher,
     GitHubIssueCommentReactionPublisher,
@@ -40,9 +36,7 @@ from bumpkin.integrations.github.releases import (
     ReleasePublisher,
 )
 from bumpkin.integrations.github.runtime import (
-    APP_MODE_SHELL,
     AppRuntimeConfig,
-    load_app_runtime_config,
 )
 from bumpkin.integrations.github.tags import (
     GitHubTagPublisher,
@@ -70,6 +64,12 @@ from bumpkin.integrations.github.webhook_commands import (
 )
 from bumpkin.integrations.github.webhook_commands import (
     _resolve_shell_operation as _resolve_shell_operation_impl,
+)
+from bumpkin.integrations.github.webhook_factory import (
+    build_app_webhook_service as _build_app_webhook_service_impl,
+)
+from bumpkin.integrations.github.webhook_factory import (
+    build_app_webhook_service_from_env as _build_app_webhook_service_from_env_impl,
 )
 from bumpkin.integrations.github.webhook_parsing import (
     _normalize_headers,
@@ -627,19 +627,10 @@ def build_app_webhook_service(
     installation_token_provider: InstallationTokenProvider | None = None,
     workflow_dispatcher: WorkflowDispatcher | None = None,
 ) -> AppWebhookService:
-    return AppWebhookService(
+    return _build_app_webhook_service_impl(
+        service_factory=AppWebhookService,
         config=config,
-        state_store=state_store
-        or (
-            EphemeralAppStateStore()
-            if config.app_mode == APP_MODE_SHELL
-            and config.db_path is None
-            and config.database_url is None
-            else build_app_state_store(
-                db_path=config.db_path,
-                database_url=config.database_url,
-            )
-        ),
+        state_store=state_store,
         delivery_store=delivery_store,
         reaction_publisher=reaction_publisher,
         tag_publisher=tag_publisher,
@@ -654,6 +645,7 @@ def build_app_webhook_service(
 def build_app_webhook_service_from_env(
     environ: Mapping[str, str] | None = None,
 ) -> AppWebhookService:
-    return build_app_webhook_service(
-        config=load_app_runtime_config(environ),
+    return _build_app_webhook_service_from_env_impl(
+        service_factory=AppWebhookService,
+        environ=environ,
     )
