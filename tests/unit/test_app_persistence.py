@@ -131,7 +131,8 @@ def test_build_app_state_store_prefers_database_url(monkeypatch) -> None:
         return sentinel
 
     monkeypatch.setattr(
-        "bumpkin.integrations.github.persistence.PostgresAppStateStore", fake_postgres_store
+        "bumpkin.integrations.github.persistence_factory.PostgresAppStateStore",
+        fake_postgres_store,
     )
 
     store = build_app_state_store(
