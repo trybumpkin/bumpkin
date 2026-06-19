@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import re
 import subprocess
-import urllib.error
 import urllib.parse
-import zipfile
 from pathlib import Path
-from typing import Protocol, cast
 
 from bumpkin.integrations.github.recommendations import (
     MergeRecommendationRequest,
@@ -28,18 +24,11 @@ from bumpkin.integrations.github.tags import (
     TagPublishRequest,
 )
 from bumpkin.integrations.github.types import AppEvent
-from bumpkin.io.github_http import (
-    format_github_http_error,
-    github_request_bytes,
-    github_request_json,
-)
 from bumpkin.release.candidate import (
     _build_release_candidate,
     _candidate_fingerprint,
     _candidate_fingerprint_payload,
-    _coerce_int,
     _deserialize_release_candidate,
-    _parse_iso8601,
     _serialize_release_candidate,
 )
 from bumpkin.release.models import (
@@ -49,6 +38,11 @@ from bumpkin.release.models import (
     ReleaseRecommendationRecord,
     ReleaseScopedPullRequest,
 )
+from bumpkin.release.repository_client import (
+    GitHubRepositoryClient,
+    GitHubRepositoryClientProtocol,
+)
+from bumpkin.release.workflow_discovery import _resolve_release_candidate
 from bumpkin.versioning.tags import detect_next_version, list_tags, resolve_current_tag
 
 _LABEL_PRECEDENCE = {"NO_BUMP": 0, "PATCH": 1, "MINOR": 2, "MAJOR": 3}
@@ -63,16 +57,6 @@ _SUMMARY_LINE_RE = re.compile(r"(?im)^summary\s*:\s*(?P<value>.+)$")
 _REASONING_LINE_RE = re.compile(r"(?im)^reasoning\s*:\s*(?P<value>.+)$")
 _RELEASE_CANDIDATE_ARTIFACT_NAME = "bumpkin-release-candidate"
 _RELEASE_CANDIDATE_DISCOVERY_LIMIT = 20
-
-
-class GitHubRepositoryClientProtocol(Protocol):
-    def list_tags(self) -> list[str]: ...
-
-    def compare_commits(self, *, base_ref: str, head_ref: str) -> list[str]: ...
-
-    def list_pull_requests_for_commit(self, commit_sha: str) -> list[int]: ...
-
-    def get_pull_request(self, number: int) -> ReleaseScopedPullRequest: ...
 
 
 def _normalize_label(label: str | None) -> str | None:
@@ -157,351 +141,6 @@ def _resolve_target_ref(input_target_ref: str) -> tuple[str, str]:
     except (RuntimeError, subprocess.CalledProcessError) as err:
         raise RuntimeError("Unable to resolve HEAD for release target.") from err
     return target_sha, target_sha
-
-
-def _bytes_request(
-    *,
-    token: str,
-    url: str,
-    timeout_seconds: int,
-) -> bytes:
-    try:
-        body, _headers = github_request_bytes(
-            url=url,
-            method="GET",
-            timeout_seconds=timeout_seconds,
-            token=token,
-            user_agent="bumpkin-release-job",
-            strip_auth_on_cross_host_redirects=True,
-        )
-        return body
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
-
-
-def _json_request(
-    *,
-    token: str,
-    url: str,
-    timeout_seconds: int,
-) -> object:
-    try:
-        payload, _headers = github_request_json(
-            url=url,
-            method="GET",
-            timeout_seconds=timeout_seconds,
-            token=token,
-            user_agent="bumpkin-release-job",
-        )
-        return payload
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
-
-
-class GitHubRepositoryClient:
-    def __init__(
-        self,
-        *,
-        repository: str,
-        token: str,
-        timeout_seconds: int = 15,
-    ) -> None:
-        self._repository = repository.strip()
-        self._token = token.strip()
-        self._timeout_seconds = max(1, timeout_seconds)
-        if not self._repository:
-            raise ValueError("repository is required.")
-        if not self._token:
-            raise ValueError("github token is required.")
-
-    def list_tags(self) -> list[str]:
-        page = 1
-        per_page = 100
-        collected: list[str] = []
-        while True:
-            url = (
-                f"https://api.github.com/repos/{self._repository}/tags"
-                f"?per_page={per_page}&page={page}"
-            )
-            payload = _json_request(
-                token=self._token, url=url, timeout_seconds=self._timeout_seconds
-            )
-            if not isinstance(payload, list):
-                break
-            items = cast("list[object]", payload)
-            if not items:
-                break
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                name = str(cast("dict[str, object]", item).get("name", "")).strip()
-                if name:
-                    collected.append(name)
-            if len(items) < per_page:
-                break
-            page += 1
-        return collected
-
-    def compare_commits(self, *, base_ref: str, head_ref: str) -> list[str]:
-        encoded_base = urllib.parse.quote(base_ref, safe="")
-        encoded_head = urllib.parse.quote(head_ref, safe="")
-        url = f"https://api.github.com/repos/{self._repository}/compare/{encoded_base}...{encoded_head}"
-        payload = _json_request(token=self._token, url=url, timeout_seconds=self._timeout_seconds)
-        if not isinstance(payload, dict):
-            raise RuntimeError("GitHub compare API returned an unexpected payload.")
-        payload_map = cast("dict[str, object]", payload)
-        commits = payload_map.get("commits")
-        if not isinstance(commits, list):
-            raise RuntimeError("GitHub compare API did not include commit data.")
-        commit_shas: list[str] = []
-        for item in commits:
-            if not isinstance(item, dict):
-                continue
-            sha = str(cast("dict[str, object]", item).get("sha", "")).strip()
-            if sha:
-                commit_shas.append(sha)
-        return list(dict.fromkeys(commit_shas))
-
-    def list_pull_requests_for_commit(self, commit_sha: str) -> list[int]:
-        normalized_sha = commit_sha.strip()
-        if not normalized_sha:
-            return []
-        url = f"https://api.github.com/repos/{self._repository}/commits/{normalized_sha}/pulls"
-        payload = _json_request(token=self._token, url=url, timeout_seconds=self._timeout_seconds)
-        if not isinstance(payload, list):
-            return []
-        pull_numbers: list[int] = []
-        for item in cast("list[object]", payload):
-            if not isinstance(item, dict):
-                continue
-            number = cast("dict[str, object]", item).get("number")
-            if isinstance(number, int) and number > 0:
-                pull_numbers.append(number)
-        return list(dict.fromkeys(pull_numbers))
-
-    def get_pull_request(self, number: int) -> ReleaseScopedPullRequest:
-        url = f"https://api.github.com/repos/{self._repository}/pulls/{number}"
-        payload = _json_request(token=self._token, url=url, timeout_seconds=self._timeout_seconds)
-        if not isinstance(payload, dict):
-            raise RuntimeError(
-                f"GitHub pull request API returned an unexpected payload for PR #{number}."
-            )
-        payload_map = cast("dict[str, object]", payload)
-        title = str(payload_map.get("title", "")).strip()
-        html_url = str(payload_map.get("html_url", "")).strip()
-        merge_commit_sha = str(payload_map.get("merge_commit_sha", "")).strip()
-        merged_at_raw = str(payload_map.get("merged_at", "")).strip()
-        if not merge_commit_sha or not merged_at_raw:
-            raise RuntimeError(
-                f"PR #{number} is missing merged metadata required for a release batch."
-            )
-        user = payload_map.get("user")
-        author_login = None
-        if isinstance(user, dict):
-            author_login = str(cast("dict[str, object]", user).get("login", "")).strip() or None
-        base = payload_map.get("base")
-        head = payload_map.get("head")
-        base_ref = base_sha = head_ref = head_sha = None
-        if isinstance(base, dict):
-            base_map = cast("dict[str, object]", base)
-            base_ref = str(base_map.get("ref", "")).strip() or None
-            base_sha = str(base_map.get("sha", "")).strip() or None
-        if isinstance(head, dict):
-            head_map = cast("dict[str, object]", head)
-            head_ref = str(head_map.get("ref", "")).strip() or None
-            head_sha = str(head_map.get("sha", "")).strip() or None
-        labels_raw = payload_map.get("labels")
-        labels: list[str] = []
-        if isinstance(labels_raw, list):
-            for item in cast("list[object]", labels_raw):
-                if not isinstance(item, dict):
-                    continue
-                label_name = str(cast("dict[str, object]", item).get("name", "")).strip()
-                if label_name:
-                    labels.append(label_name)
-        return ReleaseScopedPullRequest(
-            repository=self._repository,
-            number=number,
-            title=title or f"PR #{number}",
-            url=html_url or f"https://github.com/{self._repository}/pull/{number}",
-            author_login=author_login,
-            merged_at=_parse_iso8601(merged_at_raw),
-            merge_commit_sha=merge_commit_sha,
-            base_ref=base_ref,
-            base_sha=base_sha,
-            head_ref=head_ref,
-            head_sha=head_sha,
-            labels=tuple(labels),
-        )
-
-
-def _workflow_file_path() -> str | None:
-    workflow_ref = os.getenv("GITHUB_WORKFLOW_REF", "").strip()
-    if not workflow_ref:
-        return None
-    workflow_path = workflow_ref.split("@", 1)[0]
-    marker = "/.github/workflows/"
-    marker_index = workflow_path.find(marker)
-    if marker_index == -1:
-        return None
-    return workflow_path[marker_index + 1 :].strip() or None
-
-
-def _current_branch_name() -> str | None:
-    branch_name = os.getenv("GITHUB_REF_NAME", "").strip()
-    return branch_name or None
-
-
-def _current_run_id() -> str | None:
-    run_id = os.getenv("GITHUB_RUN_ID", "").strip()
-    return run_id or None
-
-
-def _list_workflow_runs(
-    *,
-    repository: str,
-    token: str,
-    workflow_file: str,
-    branch: str | None,
-    timeout_seconds: int,
-    per_page: int = _RELEASE_CANDIDATE_DISCOVERY_LIMIT,
-) -> list[dict[str, object]]:
-    encoded_workflow_file = urllib.parse.quote(workflow_file, safe="")
-    query: list[str] = ["status=success", f"per_page={max(1, per_page)}"]
-    if branch:
-        query.append(f"branch={urllib.parse.quote(branch, safe='')}")
-    url = (
-        f"https://api.github.com/repos/{repository}/actions/workflows/{encoded_workflow_file}/runs"
-        f"?{'&'.join(query)}"
-    )
-    payload = _json_request(token=token, url=url, timeout_seconds=timeout_seconds)
-    if not isinstance(payload, dict):
-        return []
-    workflow_runs = cast("dict[str, object]", payload).get("workflow_runs")
-    if not isinstance(workflow_runs, list):
-        return []
-    return [cast("dict[str, object]", item) for item in workflow_runs if isinstance(item, dict)]
-
-
-def _list_run_artifacts(
-    *,
-    repository: str,
-    token: str,
-    run_id: str,
-    timeout_seconds: int,
-) -> list[dict[str, object]]:
-    encoded_run_id = urllib.parse.quote(run_id, safe="")
-    url = f"https://api.github.com/repos/{repository}/actions/runs/{encoded_run_id}/artifacts?per_page=100"
-    payload = _json_request(token=token, url=url, timeout_seconds=timeout_seconds)
-    if not isinstance(payload, dict):
-        return []
-    artifacts = cast("dict[str, object]", payload).get("artifacts")
-    if not isinstance(artifacts, list):
-        return []
-    return [cast("dict[str, object]", item) for item in artifacts if isinstance(item, dict)]
-
-
-def _download_release_candidate_for_run(
-    *,
-    repository: str,
-    token: str,
-    run_id: str,
-    artifact_name: str,
-    timeout_seconds: int,
-) -> ReleaseCandidate | None:
-    artifacts = _list_run_artifacts(
-        repository=repository,
-        token=token,
-        run_id=run_id,
-        timeout_seconds=timeout_seconds,
-    )
-    artifact_id: int | None = None
-    for artifact in artifacts:
-        if str(artifact.get("name", "")).strip() != artifact_name:
-            continue
-        if bool(artifact.get("expired", False)):
-            continue
-        artifact_id = _coerce_int(artifact.get("id", 0), field_name="id")
-        break
-    if artifact_id is None:
-        return None
-
-    url = f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip"
-    archive_bytes = _bytes_request(token=token, url=url, timeout_seconds=timeout_seconds)
-    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
-        json_entries = [name for name in archive.namelist() if name.endswith(".json")]
-        if not json_entries:
-            raise RuntimeError("Release candidate artifact did not contain a JSON payload.")
-        with archive.open(json_entries[0]) as candidate_file:
-            payload = json.load(candidate_file)
-    return _deserialize_release_candidate(payload)
-
-
-def _resolve_release_candidate(
-    *,
-    repository: str,
-    token: str,
-    preview_run_id: str,
-    base_tag_input: str,
-    artifact_name: str,
-    timeout_seconds: int,
-) -> ReleaseCandidate:
-    normalized_run_id = preview_run_id.strip()
-    if normalized_run_id:
-        candidate = _download_release_candidate_for_run(
-            repository=repository,
-            token=token,
-            run_id=normalized_run_id,
-            artifact_name=artifact_name,
-            timeout_seconds=timeout_seconds,
-        )
-        if candidate is None:
-            raise RuntimeError(
-                f"No release candidate artifact named '{artifact_name}' was found on run {normalized_run_id}."
-            )
-        return candidate
-
-    workflow_file = _workflow_file_path()
-    if workflow_file is None:
-        raise RuntimeError(
-            "Unable to discover prior preview candidates automatically. Pass preview_run_id."
-        )
-    branch = _current_branch_name()
-    current_run_id = _current_run_id()
-    for workflow_run in _list_workflow_runs(
-        repository=repository,
-        token=token,
-        workflow_file=workflow_file,
-        branch=branch,
-        timeout_seconds=timeout_seconds,
-    ):
-        run_id = str(workflow_run.get("id", "")).strip()
-        if not run_id or (current_run_id and run_id == current_run_id):
-            continue
-        candidate = _download_release_candidate_for_run(
-            repository=repository,
-            token=token,
-            run_id=run_id,
-            artifact_name=artifact_name,
-            timeout_seconds=timeout_seconds,
-        )
-        if candidate is None:
-            continue
-        if candidate.source_operation != "release_preview":
-            continue
-        if candidate.repository != repository:
-            continue
-        if candidate.base_tag_input != base_tag_input:
-            continue
-        return candidate
-
-    raise RuntimeError(
-        "No matching release preview candidate was found. Run release_preview first or pass preview_run_id."
-    )
 
 
 def _build_app_event(pull_request: ReleaseScopedPullRequest) -> AppEvent:
@@ -1498,6 +1137,7 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
             base_tag_input=parsed.base_tag.strip(),
             artifact_name=_RELEASE_CANDIDATE_ARTIFACT_NAME,
             timeout_seconds=parsed.request_timeout,
+            discovery_limit=_RELEASE_CANDIDATE_DISCOVERY_LIMIT,
         )
         plan = _verify_release_candidate(
             candidate=candidate,
@@ -1622,6 +1262,9 @@ __all__ = [
     "ReleasePlan",
     "ReleaseRecommendationRecord",
     "ReleaseScopedPullRequest",
+    "_build_release_candidate",
+    "_deserialize_release_candidate",
+    "_serialize_release_candidate",
     "main",
     "prepare_release_plan",
     "publish_release_plan",
