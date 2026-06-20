@@ -170,7 +170,7 @@ def extract_symbol_hint(snippet: str) -> str | None:
         if not symbol:
             continue
         lowered = symbol.lower()
-        if kind == "assignment" and (lowered in LOW_SIGNAL_HINT_SYMBOLS or symbol.isupper()):
+        if kind == "assignment" and lowered in LOW_SIGNAL_HINT_SYMBOLS:
             return None
         return f"`{symbol}`"
     return None
