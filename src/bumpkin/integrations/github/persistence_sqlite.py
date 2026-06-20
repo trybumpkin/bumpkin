@@ -8,6 +8,30 @@ from typing import Any, Self
 
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.ingress import AppEventEnvelope
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_approval_deleted_payload as _build_approval_deleted_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_approval_recorded_payload as _build_approval_recorded_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_event_recorded_payload as _build_event_recorded_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_event_status_updated_payload as _build_event_status_updated_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_publish_decision_recorded_payload as _build_publish_decision_recorded_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_recommendation_recorded_payload as _build_recommendation_recorded_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_release_backlog_included_payload as _build_release_backlog_included_payload,
+)
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_release_backlog_upserted_payload as _build_release_backlog_upserted_payload,
+)
 from bumpkin.integrations.github.persistence_migrations import apply_sqlite_migrations
 from bumpkin.integrations.github.persistence_models import (
     AuditLogRecord,
@@ -124,16 +148,12 @@ class SqliteAppStateStore:
             return False
 
         self._record_audit(
-            entity_type="app_event",
-            entity_id=f"{envelope.source}:{envelope.event_id}",
-            action="recorded",
-            actor=event.sender_login or "system",
-            details={
-                "event_type": event.event,
-                "repository": event.repository,
-                "pull_request_number": event.pull_request_number,
-                "status": status,
-            },
+            **_build_event_recorded_payload(
+                provider=envelope.source,
+                provider_event_id=envelope.event_id,
+                event=event,
+                status=status,
+            ).as_kwargs(),
         )
         self._connection.commit()
         return True
@@ -177,11 +197,11 @@ class SqliteAppStateStore:
         if updated <= 0:
             return False
         self._record_audit(
-            entity_type="app_event",
-            entity_id=f"{provider}:{provider_event_id}",
-            action="status_updated",
-            actor="system",
-            details={"status": normalized_status},
+            **_build_event_status_updated_payload(
+                provider=provider,
+                provider_event_id=provider_event_id,
+                status=normalized_status,
+            ).as_kwargs(),
         )
         self._connection.commit()
         return True
@@ -318,18 +338,7 @@ class SqliteAppStateStore:
                 normalized.recorded_at,
             ),
         )
-        self._record_audit(
-            entity_type="recommendation",
-            entity_id=f"{normalized.repository}:{normalized.pull_request_number}",
-            action="recorded",
-            actor="system",
-            details={
-                "label": normalized.label,
-                "current_version": normalized.current_version,
-                "source": normalized.source,
-                "source_event_id": normalized.source_event_id,
-            },
-        )
+        self._record_audit(**_build_recommendation_recorded_payload(normalized).as_kwargs())
         self._connection.commit()
 
     def upsert_release_backlog_item(
@@ -418,21 +427,10 @@ class SqliteAppStateStore:
             raise RuntimeError("Release backlog item upsert succeeded but no row was returned.")
         backlog_id = int(row["id"])
         self._record_audit(
-            entity_type="release_backlog",
-            entity_id=f"{normalized.repository}:{normalized.pull_request_number}",
-            action="upserted",
-            actor="system",
-            details={
-                "id": backlog_id,
-                "merge_commit_sha": normalized.merge_commit_sha,
-                "recommended_label": normalized.recommended_label,
-                "recommended_current_version": normalized.recommended_current_version,
-                "pull_request_title": normalized.pull_request_title,
-                "pull_request_author_login": normalized.pull_request_author_login,
-                "pull_request_url": normalized.pull_request_url,
-                "release_summary": normalized.release_summary,
-                "source_event_id": normalized.source_event_id,
-            },
+            **_build_release_backlog_upserted_payload(
+                normalized=normalized,
+                backlog_id=backlog_id,
+            ).as_kwargs(),
         )
         self._connection.commit()
         return backlog_id
@@ -502,15 +500,10 @@ class SqliteAppStateStore:
             updated_count += int(cursor.rowcount or 0)
         if updated_count > 0:
             self._record_audit(
-                entity_type="release_backlog",
-                entity_id=f"{normalized.repository}:{normalized.release_tag}",
-                action="included",
-                actor="system",
-                details={
-                    "release_tag": normalized.release_tag,
-                    "backlog_ids": list(normalized.backlog_ids),
-                    "updated_count": updated_count,
-                },
+                **_build_release_backlog_included_payload(
+                    normalized=normalized,
+                    updated_count=updated_count,
+                ).as_kwargs(),
             )
         self._connection.commit()
         return updated_count
@@ -549,17 +542,12 @@ class SqliteAppStateStore:
         )
         approval_id = _require_lastrowid(cursor)
         self._record_audit(
-            entity_type="approval",
-            entity_id=str(approval_id),
-            action="recorded",
-            actor=approval.approved_by,
-            details={
-                "repository": approval.repository,
-                "pull_request_number": approval.pull_request_number,
-                "commit_sha": commit_sha,
-                "recommendation_hash": approval.recommendation_hash,
-                "source_event_id": source_event_id,
-            },
+            **_build_approval_recorded_payload(
+                approval_id=approval_id,
+                approval=approval,
+                commit_sha=commit_sha,
+                source_event_id=source_event_id,
+            ).as_kwargs(),
         )
         self._connection.commit()
         return approval_id
@@ -597,11 +585,11 @@ class SqliteAppStateStore:
         removed = int(cursor.rowcount)
         if removed > 0:
             self._record_audit(
-                entity_type="approval",
-                entity_id=f"{repository}:{pull_request_number}",
-                action="deleted",
-                actor="system",
-                details={"removed_rows": removed},
+                **_build_approval_deleted_payload(
+                    repository=repository,
+                    pull_request_number=pull_request_number,
+                    removed_rows=removed,
+                ).as_kwargs(),
             )
             self._connection.commit()
         return removed
@@ -648,17 +636,13 @@ class SqliteAppStateStore:
         )
         decision_id = _require_lastrowid(cursor)
         self._record_audit(
-            entity_type="publish_decision",
-            entity_id=str(decision_id),
-            action="recorded",
-            actor="system",
-            details={
-                "repository": repository,
-                "pull_request_number": pull_request_number,
-                "commit_sha": commit_sha,
-                "allowed": decision.allowed,
-                "guard_reasons": guard_reasons,
-            },
+            **_build_publish_decision_recorded_payload(
+                decision_id=decision_id,
+                repository=repository,
+                pull_request_number=pull_request_number,
+                commit_sha=commit_sha,
+                decision=decision,
+            ).as_kwargs(),
         )
         self._connection.commit()
         return decision_id
