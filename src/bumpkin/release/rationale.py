@@ -142,7 +142,9 @@ def _format_addition_sentence(
     path = evidence.get("path", "")
     linked_path = _linked_path(record, path, target_sha)
     entrypoint_paths = [
-        entrypoint_path for entrypoint_path in _entrypoint_export_paths(record) if entrypoint_path != path
+        entrypoint_path
+        for entrypoint_path in _entrypoint_export_paths(record)
+        if entrypoint_path != path
     ]
     if symbol and entrypoint_paths:
         entrypoint = _linked_path(record, entrypoint_paths[0], target_sha)
@@ -173,7 +175,9 @@ def _format_change_sentence(
     rule = evidence.get("rule", "").lower()
     if rule == "export_symbol_removed":
         if symbol:
-            return f"PR #{pr_number} removed `{symbol}` from {linked_path}, breaking the public API."
+            return (
+                f"PR #{pr_number} removed `{symbol}` from {linked_path}, breaking the public API."
+            )
         return f"PR #{pr_number} removed a public API surface in {linked_path}."
     if rule == "export_symbol_changed":
         if symbol:

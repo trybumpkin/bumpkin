@@ -193,8 +193,7 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert (
         "- PR #12 introduced `publicThing` in "
         "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
-        "expanding the public API."
-        in plan.preview_notes
+        "expanding the public API." in plan.preview_notes
     )
     assert (
         "- Overall, this batch adds public API without breaking existing consumers, so it warrants "
@@ -286,8 +285,7 @@ def test_prepare_release_plan_keeps_all_preview_rationale_and_evidence_entries(
         assert (
             f"- PR #{pr_number} introduced `publicThing` in "
             "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
-            "expanding the public API."
-            in plan.preview_notes
+            "expanding the public API." in plan.preview_notes
         )
         assert (
             f"- PR #{pr_number}: [`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py) "

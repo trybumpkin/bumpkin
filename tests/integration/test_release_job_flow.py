@@ -181,8 +181,7 @@ def test_release_job_flow_plans_and_publishes_release_batch(monkeypatch) -> None
     assert (
         "PR #31 introduced `publicThing` in "
         "[`src/api.ts`](https://github.com/acme/repo/blob/sha-main/src/api.ts), "
-        "expanding the public API."
-        in plan.preview_notes
+        "expanding the public API." in plan.preview_notes
     )
     assert "## Key evidence" in plan.preview_notes
     assert (
