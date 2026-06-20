@@ -87,9 +87,7 @@ def build_recommendation_snapshot_from_row(
     current_version_value = row["current_version"]
     return build_recommendation_snapshot(
         label=str(row["label"]),
-        current_version=(
-            str(current_version_value) if current_version_value is not None else None
-        ),
+        current_version=(str(current_version_value) if current_version_value is not None else None),
     )
 
 
