@@ -150,6 +150,14 @@ class AuditLogStore(Protocol):
     def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]: ...
 
 
+class RecommendationReleaseBacklogStore(
+    RecommendationPersistenceStore,
+    ReleaseBacklogPersistenceStore,
+    Protocol,
+):
+    pass
+
+
 class AppStateStore(
     EventPersistenceStore,
     RecommendationPersistenceStore,

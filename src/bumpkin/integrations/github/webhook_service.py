@@ -8,7 +8,10 @@ from bumpkin.integrations.github.events import (
     is_recommendation_merge_event,
     normalize_webhook_event,
 )
-from bumpkin.integrations.github.persistence import AppStateStore
+from bumpkin.integrations.github.persistence_protocols import (
+    EventPersistenceStore,
+    RecommendationReleaseBacklogStore,
+)
 from bumpkin.integrations.github.reactions import (
     GitHubIssueCommentPublisher,
     GitHubIssueCommentReactionPublisher,
@@ -101,7 +104,7 @@ def replay_deferred_merge_recommendations_once(
     defer_self_merge_recommendation: bool,
     self_repository: str | None,
     deployment_revision: str | None,
-    state_store: AppStateStore,
+    state_store: EventPersistenceStore,
     process_merge_recommendation_fn: ProcessMergeRecommendationFn,
 ) -> None:
     if not defer_self_merge_recommendation:
@@ -142,7 +145,7 @@ def has_pending_self_deferred_merge_for_current_deploy(
     defer_self_merge_recommendation: bool,
     self_repository: str | None,
     deployment_revision: str | None,
-    state_store: AppStateStore,
+    state_store: EventPersistenceStore,
 ) -> bool:
     if not defer_self_merge_recommendation:
         return False
@@ -165,7 +168,7 @@ def process_merge_recommendation(
     event: AppEvent,
     payload: Mapping[str, object],
     response_payload: dict[str, Any] | None,
-    state_store: AppStateStore,
+    state_store: RecommendationReleaseBacklogStore,
     recommendation_runner: RecommendationRunner,
     resolve_provider_token: ResolveProviderTokenFn,
     resolve_recommendation_publisher: ResolveRecommendationPublisherFn,
@@ -390,7 +393,7 @@ def handle_issue_comment_command(
     command: SlashCommand,
     response_payload: dict[str, Any],
     mismatch_policy: str,
-    state_store: AppStateStore,
+    state_store: RecommendationReleaseBacklogStore,
     resolve_tag_publisher: ResolveTagPublisherFn,
     process_release_command_fn: ProcessReleaseCommandFn,
     configured_reaction_publisher: ReactionPublisher | None,
