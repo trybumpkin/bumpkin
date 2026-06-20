@@ -47,7 +47,9 @@ ProcessMergeRecommendationFn = Callable[
     [AppEvent, Mapping[str, object], dict[str, Any] | None], None
 ]
 ProcessReleaseCommandFn = Callable[[AppEvent, dict[str, Any]], None]
-ProcessShellCommandFn = Callable[[AppEvent, Mapping[str, object], SlashCommand, dict[str, Any]], None]
+ProcessShellCommandFn = Callable[
+    [AppEvent, Mapping[str, object], SlashCommand, dict[str, Any]], None
+]
 
 
 def build_event_payload(event: AppEvent) -> dict[str, Any]:
