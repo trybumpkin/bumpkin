@@ -26,10 +26,6 @@ def _versioning_context_notes(notes: tuple[str, ...] | list[str]) -> list[str]:
     return [note for note in notes if note.startswith(relevant_prefixes)]
 
 
-def _rationale_generation_notes(notes: tuple[str, ...] | list[str]) -> list[str]:
-    return [note for note in notes if note.startswith("Rationale generation:")]
-
-
 def _top_label_records(
     recommendations: list[ReleaseRecommendationRecord],
     release_label: str | None,
@@ -261,13 +257,6 @@ def _render_preview_notes(
     if versioning_notes:
         lines.extend(["", "## Versioning context"])
         lines.extend(f"- {note}" for note in versioning_notes)
-
-    rationale_notes = _rationale_generation_notes(notes)
-    if rationale_notes:
-        lines.extend(["", "## Rationale generation"])
-        lines.extend(
-            f"- {note.removeprefix('Rationale generation: ').strip()}" for note in rationale_notes
-        )
 
     evidence_lines = _build_release_evidence_lines(
         release_label=release_label,
