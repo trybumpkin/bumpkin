@@ -322,6 +322,8 @@ def _extract_identifier_from_snippet(snippet: str) -> str | None:
     patterns = (
         r"\b(?:def|class|function)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
         r"\b(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=]+\s*=",
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)",
         r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(",
     )
     for pattern in patterns:
