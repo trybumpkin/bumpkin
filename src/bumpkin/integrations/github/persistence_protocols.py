@@ -17,9 +17,7 @@ from bumpkin.integrations.github.types import AppEvent
 DEFAULT_EVENT_STATUS = "accepted"
 
 
-class AppStateStore(Protocol):
-    def close(self) -> None: ...
-
+class EventPersistenceStore(Protocol):
     def record_event(
         self,
         *,
@@ -46,6 +44,8 @@ class AppStateStore(Protocol):
         limit: int = 20,
     ) -> list[StoredEventRecord]: ...
 
+
+class RecommendationPersistenceStore(Protocol):
     def latest_recommended_label_for_pr(
         self,
         *,
@@ -72,6 +72,8 @@ class AppStateStore(Protocol):
         recorded_at: datetime | None = None,
     ) -> None: ...
 
+
+class ReleaseBacklogPersistenceStore(Protocol):
     def upsert_release_backlog_item(
         self,
         *,
@@ -104,6 +106,8 @@ class AppStateStore(Protocol):
         included_at: datetime | None = None,
     ) -> int: ...
 
+
+class ApprovalPersistenceStore(Protocol):
     def record_approval(
         self,
         *,
@@ -121,6 +125,8 @@ class AppStateStore(Protocol):
 
     def delete_approvals(self, *, repository: str, pull_request_number: int) -> int: ...
 
+
+class PublishDecisionPersistenceStore(Protocol):
     def record_publish_decision(
         self,
         *,
@@ -139,4 +145,18 @@ class AppStateStore(Protocol):
         pull_request_number: int,
     ) -> PublishDecisionRecord | None: ...
 
+
+class AuditLogStore(Protocol):
     def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]: ...
+
+
+class AppStateStore(
+    EventPersistenceStore,
+    RecommendationPersistenceStore,
+    ReleaseBacklogPersistenceStore,
+    ApprovalPersistenceStore,
+    PublishDecisionPersistenceStore,
+    AuditLogStore,
+    Protocol,
+):
+    def close(self) -> None: ...

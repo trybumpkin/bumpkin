@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from hashlib import sha256
 
 from bumpkin.integrations.github.guards import ApprovalRecord
-from bumpkin.integrations.github.persistence_protocols import AppStateStore
+from bumpkin.integrations.github.persistence_protocols import ApprovalPersistenceStore
 
 __all__ = [
     "InMemoryApprovalStore",
@@ -32,7 +32,7 @@ class InMemoryApprovalStore:
 
 
 class SqliteApprovalStore:
-    def __init__(self, state_store: AppStateStore) -> None:
+    def __init__(self, state_store: ApprovalPersistenceStore) -> None:
         self._state_store = state_store
 
     def get(self, repository: str, pull_request_number: int) -> ApprovalRecord | None:
