@@ -160,8 +160,6 @@ def _build_release_why_lines(
             continue
         seen.add(sentence)
         lines.append(sentence)
-        if len(lines) >= 3:
-            break
     if normalized_label == "MAJOR":
         lines.append("Breaking public APIs were removed or changed in this release batch.")
     elif normalized_label == "MINOR":
@@ -222,7 +220,7 @@ def _build_release_evidence_lines(
     release_label: str | None,
     recommendations: list[ReleaseRecommendationRecord],
     target_sha: str,
-    max_items: int = 3,
+    max_items: int | None = None,
 ) -> list[str]:
     evidence: list[str] = []
     seen: set[str] = set()
@@ -240,14 +238,14 @@ def _build_release_evidence_lines(
             seen.add(line)
             evidence.append(line)
             has_detailed_evidence = True
-            if len(evidence) >= max_items:
+            if max_items is not None and len(evidence) >= max_items:
                 return evidence
         if record.summary and not has_detailed_evidence:
             line = f"PR #{record.pull_request.number}: {record.summary}"
             if line not in seen:
                 seen.add(line)
                 evidence.append(line)
-                if len(evidence) >= max_items:
+                if max_items is not None and len(evidence) >= max_items:
                     return evidence
     return evidence
 
