@@ -60,7 +60,9 @@ def _format_preview_file_link(*, repository: str, target_sha: str, path: str) ->
     if not repository.strip() or not target_sha.strip() or not normalized_path:
         return path
     encoded_path = urllib.parse.quote(normalized_path, safe="/")
-    return f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
+    return (
+        f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
+    )
 
 
 def _humanize_evidence_line(

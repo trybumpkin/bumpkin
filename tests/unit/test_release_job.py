@@ -327,9 +327,7 @@ def test_prepare_release_plan_uses_rewritten_preview_rationale(monkeypatch) -> N
         recommendation_runner=runner,
     )
 
-    assert (
-        "- PR #12 introduced a new release summary API for maintainers." in plan.preview_notes
-    )
+    assert "- PR #12 introduced a new release summary API for maintainers." in plan.preview_notes
     assert (
         "- This batch stays additive because no exported APIs were removed or narrowed."
         in plan.preview_notes

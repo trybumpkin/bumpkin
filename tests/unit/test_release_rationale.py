@@ -25,7 +25,9 @@ def _pull_request(*, number: int, title: str) -> ReleaseScopedPullRequest:
     )
 
 
-def _record(*, number: int, label: str, title: str, evidence_lines: tuple[str, ...]) -> ReleaseRecommendationRecord:
+def _record(
+    *, number: int, label: str, title: str, evidence_lines: tuple[str, ...]
+) -> ReleaseRecommendationRecord:
     return ReleaseRecommendationRecord(
         pull_request=_pull_request(number=number, title=title),
         recommendation=MergeRecommendation(

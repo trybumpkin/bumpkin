@@ -53,7 +53,9 @@ from bumpkin.release.planning import (
     verify_release_candidate as _verify_release_candidate_impl,
 )
 from bumpkin.release.publish import publish_release_plan
-from bumpkin.release.rationale import resolve_preview_rationale_lines as _resolve_preview_rationale_lines
+from bumpkin.release.rationale import (
+    resolve_preview_rationale_lines as _resolve_preview_rationale_lines,
+)
 from bumpkin.release.rendering import (
     _render_no_release_preview_notes,
     _render_preview_notes,

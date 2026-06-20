@@ -7,7 +7,11 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from bumpkin.io.tokens import is_valid_models_endpoint, resolve_models_endpoint, resolve_models_token
+from bumpkin.io.tokens import (
+    is_valid_models_endpoint,
+    resolve_models_endpoint,
+    resolve_models_token,
+)
 from bumpkin.providers.llm_payloads import LLMResponseError, extract_content, extract_json_payload
 from bumpkin.providers.llm_transport import LLMUnavailableError, post_json_request
 from bumpkin.release.analysis import _normalize_label
@@ -51,7 +55,9 @@ def _format_preview_file_link(*, repository: str, target_sha: str, path: str) ->
     if not repository.strip() or not target_sha.strip() or not normalized_path:
         return path
     encoded_path = urllib.parse.quote(normalized_path, safe="/")
-    return f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
+    return (
+        f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
+    )
 
 
 def _format_rationale_sentence(
@@ -209,7 +215,7 @@ def _build_rationale_prompt_payload(
 def _build_rationale_messages(prompt_payload: dict[str, object]) -> list[dict[str, str]]:
     instructions = (
         "You rewrite maintainer-facing release rationale bullets from deterministic release facts. "
-        "Return JSON only with the shape {\"lines\":[\"...\"]}. "
+        'Return JSON only with the shape {"lines":["..."]}. '
         "Use 2 to 5 short bullets. "
         "Use plain English, mention PR numbers when relevant, and explain what changed in user-facing terms. "
         "Use only the provided facts. Do not invent files, symbols, or PR numbers. "
@@ -241,7 +247,9 @@ def _validate_rationale_lines(lines: list[str], *, allowed_pr_numbers: set[int])
         for match in _PR_REFERENCE_RE.finditer(line):
             pr_number = int(match.group("number"))
             if pr_number not in allowed_pr_numbers:
-                raise LLMResponseError("Model rationale referenced a pull request outside the release scope.")
+                raise LLMResponseError(
+                    "Model rationale referenced a pull request outside the release scope."
+                )
     return lines
 
 
