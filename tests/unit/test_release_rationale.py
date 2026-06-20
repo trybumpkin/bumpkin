@@ -95,6 +95,107 @@ def test_resolve_preview_rationale_lines_uses_model_rewrite_when_valid() -> None
     ]
 
 
+def test_resolve_preview_rationale_lines_accepts_plaintext_bullets() -> None:
+    records = [
+        _record(
+            number=12,
+            label="MINOR",
+            title="Add greet_pair API",
+            evidence_lines=(
+                "src/api.py | rule=export_symbol_added | scope=public_api | symbol=greet_pair",
+            ),
+        ),
+    ]
+
+    def fake_post_json_request(**_: object) -> dict[str, object]:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "- PR #12 introduced greet_pair for paired greetings.\n- This batch remains additive."
+                    }
+                }
+            ]
+        }
+
+    lines = resolve_preview_rationale_lines(
+        release_label="MINOR",
+        recommendations=records,
+        target_sha="sha-main",
+        model="deepseek/deepseek-chat",
+        models_endpoint="https://example.com/v1/chat/completions",
+        models_token="token-123",
+        post_json_request_fn=fake_post_json_request,
+    )
+
+    assert lines == [
+        "PR #12 introduced greet_pair for paired greetings.",
+        "This batch remains additive.",
+    ]
+
+
+def test_resolve_preview_rationale_lines_repairs_non_json_output() -> None:
+    records = [
+        _record(
+            number=12,
+            label="MINOR",
+            title="Add greet_pair API",
+            evidence_lines=(
+                "src/api.py | rule=export_symbol_added | scope=public_api | symbol=greet_pair",
+            ),
+        ),
+    ]
+    calls = {"count": 0}
+    notes: list[str] = []
+
+    def fake_post_json_request(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": ("- one\n- two\n- three\n- four\n- five\n- six\n- seven\n")
+                        }
+                    }
+                ]
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "lines": [
+                                    "PR #12 introduced greet_pair for paired greetings.",
+                                    "This batch remains additive.",
+                                ]
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    lines = resolve_preview_rationale_lines(
+        release_label="MINOR",
+        recommendations=records,
+        target_sha="sha-main",
+        model="deepseek/deepseek-chat",
+        models_endpoint="https://example.com/v1/chat/completions",
+        models_token="token-123",
+        post_json_request_fn=fake_post_json_request,
+        notes=notes,
+    )
+
+    assert calls["count"] == 2
+    assert lines == [
+        "PR #12 introduced greet_pair for paired greetings.",
+        "This batch remains additive.",
+    ]
+    assert any("required repair before it could be used" in note for note in notes)
+
+
 def test_resolve_preview_rationale_lines_falls_back_when_model_references_unknown_pr() -> None:
     records = [
         _record(
@@ -106,6 +207,7 @@ def test_resolve_preview_rationale_lines_falls_back_when_model_references_unknow
             ),
         ),
     ]
+    notes: list[str] = []
 
     def fake_post_json_request(**_: object) -> dict[str, object]:
         return {
@@ -133,6 +235,7 @@ def test_resolve_preview_rationale_lines_falls_back_when_model_references_unknow
         models_endpoint="https://example.com/v1/chat/completions",
         models_token="token-123",
         post_json_request_fn=fake_post_json_request,
+        notes=notes,
     )
 
     assert lines == _build_release_why_lines(
@@ -140,3 +243,4 @@ def test_resolve_preview_rationale_lines_falls_back_when_model_references_unknow
         recommendations=records,
         target_sha="sha-main",
     )
+    assert any("using deterministic rationale after rewrite fallback" in note for note in notes)

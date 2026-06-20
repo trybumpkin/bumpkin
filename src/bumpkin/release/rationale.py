@@ -18,6 +18,8 @@ from bumpkin.release.analysis import _normalize_label
 from bumpkin.release.models import ReleaseRecommendationRecord
 
 _PR_REFERENCE_RE = re.compile(r"\bPR\s+#(?P<number>\d+)\b")
+_PLAINTEXT_BULLET_RE = re.compile(r"^(?:[-*]\s+|\d+\.\s+)(?P<value>.+)$")
+_RATIONALE_NOTE_PREFIX = "Rationale generation:"
 
 
 def _top_label_records(
@@ -229,7 +231,12 @@ def _build_rationale_messages(prompt_payload: dict[str, object]) -> list[dict[st
 
 
 def _coerce_rationale_lines(payload: dict[str, Any]) -> list[str]:
-    raw_lines = payload.get("lines")
+    raw_lines = (
+        payload.get("lines")
+        or payload.get("bullets")
+        or payload.get("rationale_lines")
+        or payload.get("rationale")
+    )
     if isinstance(raw_lines, str):
         candidate_lines = [line.strip() for line in raw_lines.splitlines() if line.strip()]
     elif isinstance(raw_lines, list):
@@ -237,8 +244,8 @@ def _coerce_rationale_lines(payload: dict[str, Any]) -> list[str]:
     else:
         raise LLMResponseError("Model rationale output did not include a lines array.")
     cleaned_lines = [line.removeprefix("- ").strip() for line in candidate_lines if line.strip()]
-    if not 2 <= len(cleaned_lines) <= 5:
-        raise LLMResponseError("Model rationale output must contain between 2 and 5 lines.")
+    if not 1 <= len(cleaned_lines) <= 6:
+        raise LLMResponseError("Model rationale output must contain between 1 and 6 lines.")
     return cleaned_lines
 
 
@@ -253,6 +260,84 @@ def _validate_rationale_lines(lines: list[str], *, allowed_pr_numbers: set[int])
     return lines
 
 
+def _append_rationale_note(notes: list[str] | None, message: str) -> None:
+    if notes is None:
+        return
+    normalized = " ".join(message.split()).strip()
+    if not normalized:
+        return
+    note = f"{_RATIONALE_NOTE_PREFIX} {normalized}"
+    if note not in notes:
+        notes.append(note)
+
+
+def _extract_plaintext_rationale_lines(content: str) -> list[str]:
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            text = "\n".join(lines[1:-1]).strip()
+    collected: list[str] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        match = _PLAINTEXT_BULLET_RE.match(stripped)
+        if match:
+            collected.append(match.group("value").strip())
+            continue
+        if not collected:
+            collected.append(stripped)
+    if not 1 <= len(collected) <= 6:
+        raise LLMResponseError(
+            "Model rationale plaintext fallback did not yield between 1 and 6 lines."
+        )
+    return collected
+
+
+def _build_rationale_repair_messages(raw_content: str) -> list[dict[str, str]]:
+    instructions = (
+        "Convert the candidate rationale text into strict JSON with the exact shape "
+        '{"lines":["..."]}. Keep only 1 to 6 short maintainer-facing bullets. Do not add '
+        "facts, file paths, or PR numbers that are not already present. Return JSON only."
+    )
+    return [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": raw_content},
+    ]
+
+
+def _request_rationale_repair(
+    *,
+    raw_content: str,
+    model: str,
+    token: str,
+    endpoint: str,
+    max_retries: int,
+    request_timeout: int,
+    post_json_request_fn: Callable[..., dict[str, Any]],
+) -> list[str]:
+    raw = post_json_request_fn(
+        endpoint=endpoint,
+        token=token,
+        payload={
+            "model": model,
+            "messages": _build_rationale_repair_messages(raw_content),
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+            "max_tokens": 250,
+        },
+        max_retries=max_retries,
+        request_timeout=request_timeout,
+    )
+    repaired_content = extract_content(raw)
+    try:
+        payload = extract_json_payload(repaired_content)
+        return _coerce_rationale_lines(payload)
+    except LLMResponseError:
+        return _extract_plaintext_rationale_lines(repaired_content)
+
+
 def _request_rationale_rewrite(
     *,
     prompt_payload: dict[str, object],
@@ -262,7 +347,7 @@ def _request_rationale_rewrite(
     max_retries: int,
     request_timeout: int,
     post_json_request_fn: Callable[..., dict[str, Any]],
-) -> list[str]:
+) -> tuple[list[str], bool]:
     raw = post_json_request_fn(
         endpoint=endpoint,
         token=token,
@@ -277,8 +362,25 @@ def _request_rationale_rewrite(
         request_timeout=request_timeout,
     )
     content = extract_content(raw)
-    payload = extract_json_payload(content)
-    return _coerce_rationale_lines(payload)
+    try:
+        payload = extract_json_payload(content)
+        return _coerce_rationale_lines(payload), False
+    except LLMResponseError as primary_error:
+        try:
+            return _extract_plaintext_rationale_lines(content), False
+        except LLMResponseError:
+            repaired_lines = _request_rationale_repair(
+                raw_content=content,
+                model=model,
+                token=token,
+                endpoint=endpoint,
+                max_retries=max_retries,
+                request_timeout=request_timeout,
+                post_json_request_fn=post_json_request_fn,
+            )
+            if not repaired_lines:
+                raise primary_error from primary_error
+            return repaired_lines, True
 
 
 def resolve_preview_rationale_lines(
@@ -293,6 +395,7 @@ def resolve_preview_rationale_lines(
     max_retries: int = 3,
     request_timeout: int = 45,
     post_json_request_fn: Callable[..., dict[str, Any]] = post_json_request,
+    notes: list[str] | None = None,
 ) -> list[str]:
     fallback_lines = _build_release_why_lines(
         release_label=release_label,
@@ -315,6 +418,10 @@ def resolve_preview_rationale_lines(
     secondary_model = (fallback_model or os.getenv("BUMPKIN_FALLBACK_MODEL", "")).strip()
     token = (models_token or resolve_models_token(endpoint=endpoint)).strip()
     if not endpoint or not primary_model or not token or not is_valid_models_endpoint(endpoint):
+        _append_rationale_note(
+            notes,
+            "using deterministic rationale because rewrite model configuration was unavailable.",
+        )
         return fallback_lines
 
     allowed_pr_numbers = {
@@ -327,9 +434,10 @@ def resolve_preview_rationale_lines(
     if secondary_model and secondary_model != primary_model:
         candidate_models.append(secondary_model)
 
+    failure_reasons: list[str] = []
     for candidate_model in candidate_models:
         try:
-            lines = _request_rationale_rewrite(
+            lines, used_repair = _request_rationale_rewrite(
                 prompt_payload=prompt_payload,
                 model=candidate_model,
                 token=token,
@@ -338,10 +446,25 @@ def resolve_preview_rationale_lines(
                 request_timeout=request_timeout,
                 post_json_request_fn=post_json_request_fn,
             )
-            return _validate_rationale_lines(lines, allowed_pr_numbers=allowed_pr_numbers)
-        except (LLMUnavailableError, LLMResponseError):
+            validated_lines = _validate_rationale_lines(
+                lines, allowed_pr_numbers=allowed_pr_numbers
+            )
+            if used_repair:
+                _append_rationale_note(
+                    notes,
+                    f"rewrite model output required repair before it could be used ({candidate_model}).",
+                )
+            return validated_lines
+        except (LLMUnavailableError, LLMResponseError) as err:
+            failure_reasons.append(f"{candidate_model}: {err}")
             continue
 
+    if failure_reasons:
+        _append_rationale_note(
+            notes,
+            "using deterministic rationale after rewrite fallback. "
+            f"Reasons: {'; '.join(failure_reasons)}",
+        )
     return fallback_lines
 
 
