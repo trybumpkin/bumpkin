@@ -9,6 +9,11 @@ from bumpkin.integrations.github.persistence import SqliteAppStateStore, build_a
 from bumpkin.integrations.github.persistence_record_parsing import (
     build_publish_decision_record,
 )
+from bumpkin.integrations.github.persistence_write_normalization import (
+    normalize_recommendation_snapshot_input,
+    normalize_release_backlog_inclusion_input,
+    normalize_release_backlog_write_input,
+)
 from bumpkin.integrations.github.types import AppEvent
 
 
@@ -415,3 +420,64 @@ def test_build_publish_decision_record_parses_guard_reasons_payload() -> None:
     assert record.reason == "stale_approval"
     assert record.guard_reasons == ("stale_approval", "required_checks_not_green")
     assert record.policy_snapshot["required_checks"] == ["test", "lint"]
+
+
+def test_normalize_recommendation_snapshot_input_trims_and_defaults() -> None:
+    normalized = normalize_recommendation_snapshot_input(
+        repository="  acme/repo  ",
+        pull_request_number=7,
+        label="minor",
+        current_version=" v1.2.3 ",
+        source=" ",
+        source_event_id=" delivery-1 ",
+        recorded_at=datetime(2026, 3, 20, 12, 0, tzinfo=UTC),
+    )
+
+    assert normalized.repository == "acme/repo"
+    assert normalized.label == "MINOR"
+    assert normalized.current_version == "1.2.3"
+    assert normalized.source == "unknown"
+    assert normalized.source_event_id == "delivery-1"
+    assert normalized.recorded_at == "2026-03-20T12:00:00+00:00"
+
+
+def test_normalize_release_backlog_write_input_cleans_optional_fields() -> None:
+    normalized = normalize_release_backlog_write_input(
+        repository=" acme/repo ",
+        pull_request_number=9,
+        merge_commit_sha=" abc123 ",
+        recommended_label="patch",
+        recommended_current_version=" v0.17.0 ",
+        pull_request_title="  Ship it  ",
+        pull_request_author_login="  octocat  ",
+        pull_request_url=" https://example.com/pr/9 ",
+        release_summary="  Summary text.  ",
+        source_event_id=" delivery-9 ",
+        merged_at=datetime(2026, 3, 21, 12, 0, tzinfo=UTC),
+    )
+
+    assert normalized.repository == "acme/repo"
+    assert normalized.merge_commit_sha == "abc123"
+    assert normalized.recommended_label == "PATCH"
+    assert normalized.recommended_current_version == "0.17.0"
+    assert normalized.pull_request_title == "Ship it"
+    assert normalized.pull_request_author_login == "octocat"
+    assert normalized.pull_request_url == "https://example.com/pr/9"
+    assert normalized.release_summary == "Summary text."
+    assert normalized.source_event_id == "delivery-9"
+    assert normalized.merged_at == "2026-03-21T12:00:00+00:00"
+
+
+def test_normalize_release_backlog_inclusion_input_filters_ids() -> None:
+    normalized = normalize_release_backlog_inclusion_input(
+        repository=" acme/repo ",
+        backlog_ids=(3, -1, 2, 3, 0),
+        release_tag=" v1.0.0 ",
+        included_at=datetime(2026, 3, 21, 14, 0, tzinfo=UTC),
+    )
+
+    assert normalized is not None
+    assert normalized.repository == "acme/repo"
+    assert normalized.release_tag == "v1.0.0"
+    assert normalized.backlog_ids == (2, 3)
+    assert normalized.included_at == "2026-03-21T14:00:00+00:00"
