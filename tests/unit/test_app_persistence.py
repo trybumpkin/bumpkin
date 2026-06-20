@@ -6,10 +6,16 @@ from datetime import UTC, datetime, timedelta
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.ingress import AppEventEnvelope
 from bumpkin.integrations.github.persistence import SqliteAppStateStore, build_app_state_store
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_event_recorded_payload,
+    build_publish_decision_recorded_payload,
+    build_release_backlog_upserted_payload,
+)
 from bumpkin.integrations.github.persistence_record_parsing import (
     build_publish_decision_record,
 )
 from bumpkin.integrations.github.persistence_write_normalization import (
+    NormalizedReleaseBacklogWriteInput,
     normalize_recommendation_snapshot_input,
     normalize_release_backlog_inclusion_input,
     normalize_release_backlog_write_input,
@@ -60,6 +66,30 @@ def test_sqlite_store_records_event_once_and_ignores_duplicates(tmp_path) -> Non
     assert stored.pull_request_number == 7
     assert stored.payload["comment"]["body"] == "/bumpkin approve patch"
     store.close()
+
+
+def test_build_event_recorded_payload_uses_event_context() -> None:
+    event, _ = _build_event_and_envelope(
+        event_id="delivery-1",
+        received_at=datetime(2026, 3, 20, 12, 0, tzinfo=UTC),
+    )
+
+    payload = build_event_recorded_payload(
+        provider="github",
+        provider_event_id="delivery-1",
+        event=event,
+        status="processed",
+    )
+
+    assert payload.entity_type == "app_event"
+    assert payload.entity_id == "github:delivery-1"
+    assert payload.actor == "octocat"
+    assert payload.details == {
+        "event_type": "issue_comment",
+        "repository": "acme/repo",
+        "pull_request_number": 7,
+        "status": "processed",
+    }
 
 
 def test_sqlite_store_tracks_deferred_merge_events_and_status_updates(tmp_path) -> None:
@@ -219,6 +249,50 @@ def test_sqlite_store_records_publish_decision_and_audit(tmp_path) -> None:
     assert audit_entries[0].action == "recorded"
     assert audit_entries[0].details["repository"] == "acme/repo"
     store.close()
+
+
+def test_build_publish_decision_recorded_payload_keeps_guard_reasons() -> None:
+    payload = build_publish_decision_recorded_payload(
+        decision_id=14,
+        repository="acme/repo",
+        pull_request_number=7,
+        commit_sha="abc123",
+        decision=PublishGuardDecision(
+            allowed=False,
+            guard_reasons=("stale_approval", "required_checks_not_green"),
+        ),
+    )
+
+    assert payload.entity_type == "publish_decision"
+    assert payload.entity_id == "14"
+    assert payload.details["allowed"] is False
+    assert payload.details["guard_reasons"] == [
+        "stale_approval",
+        "required_checks_not_green",
+    ]
+
+
+def test_build_release_backlog_upserted_payload_keeps_release_summary() -> None:
+    normalized = NormalizedReleaseBacklogWriteInput(
+        repository="acme/repo",
+        pull_request_number=9,
+        merge_commit_sha="deadbeef",
+        recommended_label="MINOR",
+        recommended_current_version="1.2.3",
+        pull_request_title="Add release summaries",
+        pull_request_author_login="octocat",
+        pull_request_url="https://github.com/acme/repo/pull/9",
+        release_summary="Adds release summary support.",
+        source_event_id="delivery-9",
+        merged_at="2026-03-20T12:00:00Z",
+    )
+
+    payload = build_release_backlog_upserted_payload(normalized=normalized, backlog_id=41)
+
+    assert payload.entity_type == "release_backlog"
+    assert payload.entity_id == "acme/repo:9"
+    assert payload.details["id"] == 41
+    assert payload.details["release_summary"] == "Adds release summary support."
 
 
 def test_sqlite_store_returns_latest_recommended_label_for_pr(tmp_path) -> None:
