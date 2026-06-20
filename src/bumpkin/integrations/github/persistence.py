@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bumpkin.integrations.github.approval_store import SqliteApprovalStore
+from bumpkin.integrations.github.audit_log_store import SqliteAuditLogStore
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.persistence_ephemeral import EphemeralAppStateStore
 from bumpkin.integrations.github.persistence_factory import (
@@ -12,6 +13,7 @@ from bumpkin.integrations.github.persistence_models import ReleaseBacklogItem
 from bumpkin.integrations.github.persistence_postgres import PostgresAppStateStore
 from bumpkin.integrations.github.persistence_protocols import AppStateStore
 from bumpkin.integrations.github.persistence_sqlite import SqliteAppStateStore
+from bumpkin.integrations.github.publish_decision_store import SqlitePublishDecisionStore
 
 __all__ = [
     "AppStateStore",
@@ -22,6 +24,8 @@ __all__ = [
     "ReleaseBacklogItem",
     "SqliteAppStateStore",
     "SqliteApprovalStore",
+    "SqliteAuditLogStore",
+    "SqlitePublishDecisionStore",
     "build_app_state_store",
 ]
 

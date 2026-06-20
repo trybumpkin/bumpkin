@@ -5,7 +5,12 @@ from datetime import UTC, datetime, timedelta
 
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.ingress import AppEventEnvelope
-from bumpkin.integrations.github.persistence import SqliteAppStateStore, build_app_state_store
+from bumpkin.integrations.github.persistence import (
+    SqliteAppStateStore,
+    SqliteAuditLogStore,
+    SqlitePublishDecisionStore,
+    build_app_state_store,
+)
 from bumpkin.integrations.github.persistence_audit_payloads import (
     build_event_recorded_payload,
     build_publish_decision_recorded_payload,
@@ -249,6 +254,43 @@ def test_sqlite_store_records_publish_decision_and_audit(tmp_path) -> None:
     assert audit_entries[0].action == "recorded"
     assert audit_entries[0].details["repository"] == "acme/repo"
     store.close()
+
+
+def test_sqlite_publish_decision_and_audit_wrappers(tmp_path) -> None:
+    state_store = SqliteAppStateStore(tmp_path / "app.sqlite3")
+    publish_decision_store = SqlitePublishDecisionStore(state_store)
+    audit_log_store = SqliteAuditLogStore(state_store)
+
+    decision_id = publish_decision_store.record(
+        repository="acme/repo",
+        pull_request_number=7,
+        commit_sha="abc123",
+        decision=PublishGuardDecision(
+            allowed=False,
+            guard_reasons=("stale_approval", "required_checks_not_green"),
+        ),
+        policy_snapshot={
+            "required_checks": ["test", "lint"],
+            "allowed_branches": ["main"],
+        },
+        evaluated_at=datetime(2026, 3, 20, 12, 30, tzinfo=UTC),
+    )
+
+    latest = publish_decision_store.latest_for_pr(
+        repository="acme/repo",
+        pull_request_number=7,
+    )
+    assert latest is not None
+    assert latest.reason == "stale_approval"
+    assert latest.guard_reasons == ("stale_approval", "required_checks_not_green")
+
+    audit_entries = audit_log_store.list_entries(
+        entity_type="publish_decision",
+        entity_id=str(decision_id),
+    )
+    assert audit_entries
+    assert audit_entries[0].details["repository"] == "acme/repo"
+    state_store.close()
 
 
 def test_build_publish_decision_recorded_payload_keeps_guard_reasons() -> None:
