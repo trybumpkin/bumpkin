@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from bumpkin.integrations.github.guards import ApprovalRecord, PublishGuardDecision
 from bumpkin.integrations.github.ingress import AppEventEnvelope
 from bumpkin.integrations.github.persistence import SqliteAppStateStore, build_app_state_store
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_publish_decision_record,
+)
 from bumpkin.integrations.github.types import AppEvent
 
 
@@ -389,3 +393,25 @@ def test_sqlite_store_prefers_recorded_recommendation_snapshot_for_pr(tmp_path) 
     assert recommendation.label == "MINOR"
     assert recommendation.current_version == "1.2.3"
     store.close()
+
+
+def test_build_publish_decision_record_parses_guard_reasons_payload() -> None:
+    record = build_publish_decision_record(
+        {
+            "repository": "acme/repo",
+            "pull_request_number": 7,
+            "commit_sha": "abc123",
+            "allowed": 0,
+            "reason": "stale_approval",
+            "guard_reasons": json.dumps(
+                {"guard_reasons": ["stale_approval", "", 3, "required_checks_not_green"]}
+            ),
+            "evaluated_at": "2026-03-20T12:30:00+00:00",
+            "policy_snapshot": json.dumps({"required_checks": ["test", "lint"]}),
+        }
+    )
+
+    assert record.allowed is False
+    assert record.reason == "stale_approval"
+    assert record.guard_reasons == ("stale_approval", "required_checks_not_green")
+    assert record.policy_snapshot["required_checks"] == ["test", "lint"]

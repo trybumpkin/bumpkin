@@ -23,22 +23,34 @@ from bumpkin.integrations.github.persistence_models import (
 )
 from bumpkin.integrations.github.persistence_protocols import DEFAULT_EVENT_STATUS
 from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    extract_comment_body as _extract_comment_body,
-)
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    extract_recommended_current_version as _extract_recommended_current_version,
-)
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
     extract_recommended_label as _extract_recommended_label,
 )
 from bumpkin.integrations.github.persistence_recommendation_parsing import (
     normalize_semver_token as _normalize_semver_token,
 )
-from bumpkin.integrations.github.persistence_serialization import (
-    clean_optional_text as _clean_optional_text,
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_approval_record as _build_approval_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_audit_log_record as _build_audit_log_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_publish_decision_record as _build_publish_decision_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_recommendation_snapshot_from_row as _build_recommendation_snapshot_from_row,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_release_backlog_item as _build_release_backlog_item,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_stored_event_record as _build_stored_event_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    extract_recommendation_snapshot_from_payload as _extract_recommendation_snapshot_from_payload,
 )
 from bumpkin.integrations.github.persistence_serialization import (
-    from_iso as _from_iso,
+    clean_optional_text as _clean_optional_text,
 )
 from bumpkin.integrations.github.persistence_serialization import (
     json_dump as _json_dump,
@@ -155,24 +167,7 @@ class PostgresAppStateStore:
         if row is None:
             return None
         row_map = _postgres_row_mapping(row)
-        return StoredEventRecord(
-            provider=str(row_map["provider"]),
-            provider_event_id=str(row_map["provider_event_id"]),
-            event_type=str(row_map["event_type"]),
-            action=str(row_map["action"]) if row_map["action"] is not None else None,
-            repository=str(row_map["repository"]) if row_map["repository"] is not None else None,
-            pull_request_number=int(row_map["pull_request_number"])
-            if row_map["pull_request_number"] is not None
-            else None,
-            sender_login=str(row_map["sender_login"])
-            if row_map["sender_login"] is not None
-            else None,
-            received_at=_from_iso(str(row_map["received_at"])),
-            payload=json.loads(str(row_map["payload"])),
-            payload_hash=str(row_map["payload_hash"]),
-            headers_hash=str(row_map["headers_hash"]),
-            status=str(row_map["status"]),
-        )
+        return _build_stored_event_record(row_map)
 
     def update_event_status(
         self,
@@ -235,29 +230,7 @@ class PostgresAppStateStore:
                 (provider, repository, max(1, int(limit))),
             )
             rows = cursor.fetchall()
-        return [
-            StoredEventRecord(
-                provider=str(row_map["provider"]),
-                provider_event_id=str(row_map["provider_event_id"]),
-                event_type=str(row_map["event_type"]),
-                action=str(row_map["action"]) if row_map["action"] is not None else None,
-                repository=str(row_map["repository"])
-                if row_map["repository"] is not None
-                else None,
-                pull_request_number=int(row_map["pull_request_number"])
-                if row_map["pull_request_number"] is not None
-                else None,
-                sender_login=str(row_map["sender_login"])
-                if row_map["sender_login"] is not None
-                else None,
-                received_at=_from_iso(str(row_map["received_at"])),
-                payload=json.loads(str(row_map["payload"])),
-                payload_hash=str(row_map["payload_hash"]),
-                headers_hash=str(row_map["headers_hash"]),
-                status=str(row_map["status"]),
-            )
-            for row_map in (_postgres_row_mapping(row) for row in rows)
-        ]
+        return [_build_stored_event_record(_postgres_row_mapping(row)) for row in rows]
 
     def latest_recommended_label_for_pr(
         self,
@@ -291,14 +264,7 @@ class PostgresAppStateStore:
             )
             snapshot_row = cursor.fetchone()
         if snapshot_row is not None:
-            snapshot_map = _postgres_row_mapping(snapshot_row)
-            label = str(snapshot_map["label"]).strip().upper()
-            current_version = (
-                _normalize_semver_token(str(snapshot_map["current_version"]))
-                if snapshot_map["current_version"] is not None
-                else None
-            )
-            return RecommendationSnapshot(label=label, current_version=current_version)
+            return _build_recommendation_snapshot_from_row(_postgres_row_mapping(snapshot_row))
 
         with self._connection.cursor() as cursor:
             cursor.execute(
@@ -317,15 +283,9 @@ class PostgresAppStateStore:
         for row in rows:
             row_map = _postgres_row_mapping(row)
             payload = json.loads(str(row_map["payload"]))
-            if not isinstance(payload, dict):
-                continue
-            body = _extract_comment_body(payload)
-            if not body:
-                continue
-            label = _extract_recommended_label(body)
-            if label is not None:
-                current_version = _extract_recommended_current_version(body)
-                return RecommendationSnapshot(label=label, current_version=current_version)
+            snapshot = _extract_recommendation_snapshot_from_payload(payload)
+            if snapshot is not None:
+                return snapshot
         return None
 
     def record_recommendation_snapshot(
@@ -529,43 +489,7 @@ class PostgresAppStateStore:
                 (normalized_repository, max(1, int(limit))),
             )
             rows = cursor.fetchall()
-        return [
-            ReleaseBacklogItem(
-                id=int(row_map["id"]),
-                repository=str(row_map["repository"]),
-                pull_request_number=int(row_map["pull_request_number"]),
-                merge_commit_sha=str(row_map["merge_commit_sha"]),
-                recommended_label=str(row_map["recommended_label"]),
-                recommended_current_version=(
-                    _normalize_semver_token(str(row_map["recommended_current_version"]))
-                    if row_map["recommended_current_version"] is not None
-                    else None
-                ),
-                pull_request_title=str(row_map["pull_request_title"])
-                if row_map["pull_request_title"] is not None
-                else None,
-                pull_request_author_login=str(row_map["pull_request_author_login"])
-                if row_map["pull_request_author_login"] is not None
-                else None,
-                pull_request_url=str(row_map["pull_request_url"])
-                if row_map["pull_request_url"] is not None
-                else None,
-                release_summary=str(row_map["release_summary"])
-                if row_map["release_summary"] is not None
-                else None,
-                source_event_id=str(row_map["source_event_id"])
-                if row_map["source_event_id"] is not None
-                else None,
-                merged_at=_from_iso(str(row_map["merged_at"])),
-                included_in_release_tag=str(row_map["included_in_release_tag"])
-                if row_map["included_in_release_tag"] is not None
-                else None,
-                included_at=_from_iso(str(row_map["included_at"]))
-                if row_map["included_at"] is not None
-                else None,
-            )
-            for row_map in (_postgres_row_mapping(row) for row in rows)
-        ]
+        return [_build_release_backlog_item(_postgres_row_mapping(row)) for row in rows]
 
     def mark_release_backlog_items_included(
         self,
@@ -699,15 +623,7 @@ class PostgresAppStateStore:
             row = cursor.fetchone()
         if row is None:
             return None
-        row_map = _postgres_row_mapping(row)
-        return ApprovalRecord(
-            repository=str(row_map["repository"]),
-            pull_request_number=int(row_map["pull_request_number"]),
-            approved_label=str(row_map["approved_label"]),
-            recommendation_hash=str(row_map["recommendation_hash"]),
-            approved_by=str(row_map["approved_by"]),
-            approved_at=_from_iso(str(row_map["approved_at"])),
-        )
+        return _build_approval_record(_postgres_row_mapping(row))
 
     def delete_approvals(self, *, repository: str, pull_request_number: int) -> int:
         with self._connection.cursor() as cursor:
@@ -816,22 +732,7 @@ class PostgresAppStateStore:
             row = cursor.fetchone()
         if row is None:
             return None
-        row_map = _postgres_row_mapping(row)
-        guard_reasons_payload = json.loads(str(row_map["guard_reasons"]))
-        guard_reasons_raw = guard_reasons_payload.get("guard_reasons", [])
-        guard_reasons = tuple(
-            item for item in guard_reasons_raw if isinstance(item, str) and item.strip()
-        )
-        return PublishDecisionRecord(
-            repository=str(row_map["repository"]),
-            pull_request_number=int(row_map["pull_request_number"]),
-            commit_sha=str(row_map["commit_sha"]),
-            allowed=bool(row_map["allowed"]),
-            reason=str(row_map["reason"]),
-            guard_reasons=guard_reasons,
-            evaluated_at=_from_iso(str(row_map["evaluated_at"])),
-            policy_snapshot=json.loads(str(row_map["policy_snapshot"])),
-        )
+        return _build_publish_decision_record(_postgres_row_mapping(row))
 
     def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]:
         with self._connection.cursor() as cursor:
@@ -845,17 +746,7 @@ class PostgresAppStateStore:
                 (entity_type, entity_id),
             )
             rows = cursor.fetchall()
-        return [
-            AuditLogRecord(
-                entity_type=str(row_map["entity_type"]),
-                entity_id=str(row_map["entity_id"]),
-                action=str(row_map["action"]),
-                actor=str(row_map["actor"]),
-                timestamp=_from_iso(str(row_map["timestamp"])),
-                details=json.loads(str(row_map["details"])),
-            )
-            for row_map in (_postgres_row_mapping(row) for row in rows)
-        ]
+        return [_build_audit_log_record(_postgres_row_mapping(row)) for row in rows]
 
     def _record_audit(
         self,
