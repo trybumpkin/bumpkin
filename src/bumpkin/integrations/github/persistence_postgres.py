@@ -22,12 +22,6 @@ from bumpkin.integrations.github.persistence_models import (
     StoredEventRecord,
 )
 from bumpkin.integrations.github.persistence_protocols import DEFAULT_EVENT_STATUS
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    extract_recommended_label as _extract_recommended_label,
-)
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    normalize_semver_token as _normalize_semver_token,
-)
 from bumpkin.integrations.github.persistence_record_parsing import (
     build_approval_record as _build_approval_record,
 )
@@ -50,9 +44,6 @@ from bumpkin.integrations.github.persistence_record_parsing import (
     extract_recommendation_snapshot_from_payload as _extract_recommendation_snapshot_from_payload,
 )
 from bumpkin.integrations.github.persistence_serialization import (
-    clean_optional_text as _clean_optional_text,
-)
-from bumpkin.integrations.github.persistence_serialization import (
     json_dump as _json_dump,
 )
 from bumpkin.integrations.github.persistence_serialization import (
@@ -63,6 +54,15 @@ from bumpkin.integrations.github.persistence_serialization import (
 )
 from bumpkin.integrations.github.persistence_serialization import (
     to_iso as _to_iso,
+)
+from bumpkin.integrations.github.persistence_write_normalization import (
+    normalize_recommendation_snapshot_input as _normalize_recommendation_snapshot_input,
+)
+from bumpkin.integrations.github.persistence_write_normalization import (
+    normalize_release_backlog_inclusion_input as _normalize_release_backlog_inclusion_input,
+)
+from bumpkin.integrations.github.persistence_write_normalization import (
+    normalize_release_backlog_write_input as _normalize_release_backlog_write_input,
 )
 from bumpkin.integrations.github.types import AppEvent
 
@@ -299,17 +299,15 @@ class PostgresAppStateStore:
         source_event_id: str | None = None,
         recorded_at: datetime | None = None,
     ) -> None:
-        normalized_repository = repository.strip()
-        if not normalized_repository:
-            raise ValueError("repository is required to record recommendation snapshot.")
-        normalized_label = _extract_recommended_label(f"Proposed bump (court): {label}")
-        if normalized_label is None:
-            raise ValueError("label must be one of MAJOR, MINOR, PATCH, NO_BUMP.")
-        normalized_source = source.strip() or "unknown"
-        normalized_current_version = (
-            _normalize_semver_token(current_version) if current_version is not None else None
+        normalized = _normalize_recommendation_snapshot_input(
+            repository=repository,
+            pull_request_number=pull_request_number,
+            label=label,
+            current_version=current_version,
+            source=source,
+            source_event_id=source_event_id,
+            recorded_at=recorded_at,
         )
-        normalized_recorded_at = _to_iso(recorded_at or datetime.now(timezone.utc))  # noqa: UP017
         with self._connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -332,25 +330,25 @@ class PostgresAppStateStore:
                     recorded_at = EXCLUDED.recorded_at
                 """,
                 (
-                    normalized_repository,
-                    pull_request_number,
-                    normalized_label,
-                    normalized_current_version,
-                    normalized_source,
-                    source_event_id.strip() if source_event_id is not None else None,
-                    normalized_recorded_at,
+                    normalized.repository,
+                    normalized.pull_request_number,
+                    normalized.label,
+                    normalized.current_version,
+                    normalized.source,
+                    normalized.source_event_id,
+                    normalized.recorded_at,
                 ),
             )
         self._record_audit(
             entity_type="recommendation",
-            entity_id=f"{normalized_repository}:{pull_request_number}",
+            entity_id=f"{normalized.repository}:{normalized.pull_request_number}",
             action="recorded",
             actor="system",
             details={
-                "label": normalized_label,
-                "current_version": normalized_current_version,
-                "source": normalized_source,
-                "source_event_id": source_event_id,
+                "label": normalized.label,
+                "current_version": normalized.current_version,
+                "source": normalized.source,
+                "source_event_id": normalized.source_event_id,
             },
         )
         self._connection.commit()
@@ -370,25 +368,19 @@ class PostgresAppStateStore:
         source_event_id: str | None = None,
         merged_at: datetime | None = None,
     ) -> int:
-        normalized_repository = repository.strip()
-        if not normalized_repository:
-            raise ValueError("repository is required to upsert release backlog item.")
-        normalized_merge_commit_sha = merge_commit_sha.strip()
-        if not normalized_merge_commit_sha:
-            raise ValueError("merge_commit_sha is required to upsert release backlog item.")
-        normalized_label = _extract_recommended_label(f"Proposed bump (court): {recommended_label}")
-        if normalized_label is None:
-            raise ValueError("recommended_label must be one of MAJOR, MINOR, PATCH, NO_BUMP.")
-        normalized_current_version = (
-            _normalize_semver_token(recommended_current_version)
-            if recommended_current_version is not None
-            else None
+        normalized = _normalize_release_backlog_write_input(
+            repository=repository,
+            pull_request_number=pull_request_number,
+            merge_commit_sha=merge_commit_sha,
+            recommended_label=recommended_label,
+            recommended_current_version=recommended_current_version,
+            pull_request_title=pull_request_title,
+            pull_request_author_login=pull_request_author_login,
+            pull_request_url=pull_request_url,
+            release_summary=release_summary,
+            source_event_id=source_event_id,
+            merged_at=merged_at,
         )
-        normalized_pull_request_title = _clean_optional_text(pull_request_title)
-        normalized_pull_request_author_login = _clean_optional_text(pull_request_author_login)
-        normalized_pull_request_url = _clean_optional_text(pull_request_url)
-        normalized_release_summary = _clean_optional_text(release_summary)
-        normalized_merged_at = _to_iso(merged_at or datetime.now(timezone.utc))  # noqa: UP017
         with self._connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -423,17 +415,17 @@ class PostgresAppStateStore:
                 RETURNING id
                 """,
                 (
-                    normalized_repository,
-                    pull_request_number,
-                    normalized_merge_commit_sha,
-                    normalized_label,
-                    normalized_current_version,
-                    normalized_pull_request_title,
-                    normalized_pull_request_author_login,
-                    normalized_pull_request_url,
-                    normalized_release_summary,
-                    source_event_id.strip() if source_event_id is not None else None,
-                    normalized_merged_at,
+                    normalized.repository,
+                    normalized.pull_request_number,
+                    normalized.merge_commit_sha,
+                    normalized.recommended_label,
+                    normalized.recommended_current_version,
+                    normalized.pull_request_title,
+                    normalized.pull_request_author_login,
+                    normalized.pull_request_url,
+                    normalized.release_summary,
+                    normalized.source_event_id,
+                    normalized.merged_at,
                 ),
             )
             row = cursor.fetchone()
@@ -445,19 +437,19 @@ class PostgresAppStateStore:
         backlog_id = int(row_map["id"])
         self._record_audit(
             entity_type="release_backlog",
-            entity_id=f"{normalized_repository}:{pull_request_number}",
+            entity_id=f"{normalized.repository}:{normalized.pull_request_number}",
             action="upserted",
             actor="system",
             details={
                 "id": backlog_id,
-                "merge_commit_sha": normalized_merge_commit_sha,
-                "recommended_label": normalized_label,
-                "recommended_current_version": normalized_current_version,
-                "pull_request_title": normalized_pull_request_title,
-                "pull_request_author_login": normalized_pull_request_author_login,
-                "pull_request_url": normalized_pull_request_url,
-                "release_summary": normalized_release_summary,
-                "source_event_id": source_event_id,
+                "merge_commit_sha": normalized.merge_commit_sha,
+                "recommended_label": normalized.recommended_label,
+                "recommended_current_version": normalized.recommended_current_version,
+                "pull_request_title": normalized.pull_request_title,
+                "pull_request_author_login": normalized.pull_request_author_login,
+                "pull_request_url": normalized.pull_request_url,
+                "release_summary": normalized.release_summary,
+                "source_event_id": normalized.source_event_id,
             },
         )
         self._connection.commit()
@@ -499,18 +491,14 @@ class PostgresAppStateStore:
         release_tag: str,
         included_at: datetime | None = None,
     ) -> int:
-        normalized_repository = repository.strip()
-        normalized_release_tag = release_tag.strip()
-        if not normalized_repository:
+        normalized = _normalize_release_backlog_inclusion_input(
+            repository=repository,
+            backlog_ids=backlog_ids,
+            release_tag=release_tag,
+            included_at=included_at,
+        )
+        if normalized is None:
             return 0
-        if not normalized_release_tag:
-            raise ValueError("release_tag is required to mark release backlog items.")
-        if not backlog_ids:
-            return 0
-        normalized_ids = tuple(sorted({int(value) for value in backlog_ids if int(value) > 0}))
-        if not normalized_ids:
-            return 0
-        normalized_included_at = _to_iso(included_at or datetime.now(timezone.utc))  # noqa: UP017
         with self._connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -523,22 +511,22 @@ class PostgresAppStateStore:
                   AND included_in_release_tag IS NULL
                 """,
                 (
-                    normalized_release_tag,
-                    normalized_included_at,
-                    normalized_repository,
-                    list(normalized_ids),
+                    normalized.release_tag,
+                    normalized.included_at,
+                    normalized.repository,
+                    list(normalized.backlog_ids),
                 ),
             )
             updated_count = int(cursor.rowcount or 0)
         if updated_count > 0:
             self._record_audit(
                 entity_type="release_backlog",
-                entity_id=f"{normalized_repository}:{normalized_release_tag}",
+                entity_id=f"{normalized.repository}:{normalized.release_tag}",
                 action="included",
                 actor="system",
                 details={
-                    "release_tag": normalized_release_tag,
-                    "backlog_ids": list(normalized_ids),
+                    "release_tag": normalized.release_tag,
+                    "backlog_ids": list(normalized.backlog_ids),
                     "updated_count": updated_count,
                 },
             )
