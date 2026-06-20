@@ -192,6 +192,44 @@ def test_comment_format_includes_findings_and_aggregation() -> None:
     assert "symbol=oldApi" in body
 
 
+def test_comment_format_includes_exported_constant_symbol_in_findings() -> None:
+    body = format_recommendation_comment(
+        result={
+            "status": "classified",
+            "label": "MINOR",
+            "confidence": "high",
+            "reasoning": "Deterministic Python exported API analysis produced findings.",
+            "changelog": "feat: export default greeting constant",
+        },
+        notes=["Deterministic findings engine produced 1 finding(s)."],
+        mode="github-models",
+        findings=[
+            {
+                "id": "export_symbol_added:1",
+                "severity": "MINOR",
+                "rule": "export_symbol_added",
+                "confidence": "high",
+                "title": "Added exported symbol(s): DEFAULT_GREETING",
+                "why": "Adding exported API symbols is a backward-compatible public API change.",
+                "evidence": [
+                    {
+                        "path": "src/python_test/api.py",
+                        "snippet": 'DEFAULT_GREETING = "Hello"',
+                    }
+                ],
+                "suggested_bump": "MINOR",
+                "impact_scope": "public_api",
+            }
+        ],
+    )
+
+    assert (
+        "- src/python_test/api.py | rule=export_symbol_added | scope=public_api | suggested=MINOR"
+        in body
+    )
+    assert "symbol=DEFAULT_GREETING" in body
+
+
 def test_comment_format_includes_analysis_state_for_classified_result() -> None:
     body = format_recommendation_comment(
         result={
