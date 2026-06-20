@@ -72,30 +72,29 @@ from bumpkin.integrations.github.webhook_parsing import (
     _status_for_outcome,
 )
 from bumpkin.integrations.github.webhook_release_flow import (
-    build_release_command_reaction,
     dispatch_release_workflow_command,
-    process_bump_command_release_side_effects,
 )
 from bumpkin.integrations.github.webhook_release_flow import (
     process_release_command as _process_release_command_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
+    build_deferred_command_response,
     build_event_payload,
 )
 from bumpkin.integrations.github.webhook_service import (
     deferred_status_value as _deferred_status_value_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
+    handle_issue_comment_command as _handle_issue_comment_command_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    handle_shell_mode_command as _handle_shell_mode_command_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
     has_pending_self_deferred_merge_for_current_deploy as _has_pending_self_deferred_merge_for_current_deploy_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
     process_merge_recommendation as _process_merge_recommendation_impl,
-)
-from bumpkin.integrations.github.webhook_service import (
-    publish_issue_comment_reaction as _publish_issue_comment_reaction_impl,
-)
-from bumpkin.integrations.github.webhook_service import (
-    publish_shell_command_reaction as _publish_shell_command_reaction_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
     replay_deferred_merge_recommendations_once as _replay_deferred_merge_recommendations_once_impl,
@@ -461,106 +460,54 @@ class AppWebhookService:
             and result.event.repository.strip().lower() == self._self_repository
             and self._has_pending_self_deferred_merge_for_current_deploy()
         ):
-            response_payload["command"] = {
-                "name": result.command.name,
-                "args": list(result.command.args),
-            }
-            response_payload["reaction"] = {
-                "type": "command_deferred",
-                "command": result.command.name,
-                "applied": False,
-                "message": "Command deferred until a new app deploy is active.",
-            }
-            response_payload["command_defer"] = {
-                "status": "deferred",
-                "reason": "awaiting_new_deploy",
-                "deployment_revision": self._deployment_revision,
-            }
+            response_payload.update(
+                build_deferred_command_response(
+                    command=result.command,
+                    deployment_revision=self._deployment_revision,
+                )
+            )
             return WebhookResponse(
                 status_code=_status_for_outcome(result.outcome),
                 payload=response_payload,
             )
         if result.command is not None and self._shell_mode:
-            response_payload["command"] = {
-                "name": result.command.name,
-                "args": list(result.command.args),
-            }
-            if result.event is None:
-                response_payload["reaction"] = {
-                    "type": "workflow_dispatch_requested",
-                    "applied": False,
-                    "message": "Shell commands require repository context.",
-                }
-            else:
-                self._process_shell_command(
-                    event=result.event,
-                    payload=payload,
-                    command=result.command,
-                    response_payload=response_payload,
-                )
-            if result.event is not None and result.event.repository is not None:
-                _publish_shell_command_reaction_impl(
-                    event=result.event,
-                    command_name=result.command.name,
-                    command_args=result.command.args,
-                    command_raw=result.command.raw,
-                    reaction=response_payload["reaction"],
-                    response_payload=response_payload,
-                    configured_reaction_publisher=self._reaction_publisher,
-                    default_reaction_publisher=self._default_reaction_publisher,
-                    resolve_provider_token=self._resolve_provider_token,
-                )
+            _handle_shell_mode_command_impl(
+                event=result.event,
+                payload=payload,
+                command=result.command,
+                response_payload=response_payload,
+                configured_reaction_publisher=self._reaction_publisher,
+                default_reaction_publisher=self._default_reaction_publisher,
+                resolve_provider_token=self._resolve_provider_token,
+                process_shell_command_fn=lambda event, event_payload, command, payload_out: (
+                    self._process_shell_command(
+                        event=event,
+                        payload=event_payload,
+                        command=command,
+                        response_payload=payload_out,
+                    )
+                ),
+            )
             return WebhookResponse(
                 status_code=_status_for_outcome(result.outcome),
                 payload=response_payload,
             )
         if result.command is not None:
-            response_payload["command"] = {
-                "name": result.command.name,
-                "args": list(result.command.args),
-            }
-            recommended_label: str | None = None
-            recommended_current_version: str | None = None
-            if _is_release_command(result.command):
-                if result.event is not None and result.event.repository is not None:
-                    self._process_release_command(
-                        event=result.event,
-                        response_payload=response_payload,
-                    )
-                response_payload["reaction"] = build_release_command_reaction(response_payload)
-            elif (
-                result.command.name == "bump"
-                and result.event is not None
-                and result.event.repository is not None
-                and result.event.pull_request_number is not None
-            ):
-                process_bump_command_release_side_effects(
-                    event=result.event,
-                    command=result.command,
-                    response_payload=response_payload,
-                    state_store=self._state_store,
-                    mismatch_policy=self._config.bump_mismatch_policy,
-                    resolve_tag_publisher=self._resolve_tag_publisher,
-                )
-            else:
-                response_payload["reaction"] = _build_command_reaction(
-                    result.command,
-                    recommended_label=recommended_label,
-                    recommended_current_version=recommended_current_version,
-                    mismatch_policy=self._config.bump_mismatch_policy,
-                )
-            if result.event is not None and result.event.repository is not None:
-                _publish_issue_comment_reaction_impl(
-                    event=result.event,
-                    command_name=result.command.name,
-                    command_args=result.command.args,
-                    command_raw=result.command.raw,
-                    reaction=response_payload["reaction"],
-                    response_payload=response_payload,
-                    configured_reaction_publisher=self._reaction_publisher,
-                    default_reaction_publisher=self._default_reaction_publisher,
-                    resolve_provider_token=self._resolve_provider_token,
-                )
+            _handle_issue_comment_command_impl(
+                event=result.event,
+                command=result.command,
+                response_payload=response_payload,
+                mismatch_policy=self._config.bump_mismatch_policy,
+                state_store=self._state_store,
+                resolve_tag_publisher=self._resolve_tag_publisher,
+                process_release_command_fn=lambda event, payload_out: self._process_release_command(
+                    event=event,
+                    response_payload=payload_out,
+                ),
+                configured_reaction_publisher=self._reaction_publisher,
+                default_reaction_publisher=self._default_reaction_publisher,
+                resolve_provider_token=self._resolve_provider_token,
+            )
         return WebhookResponse(
             status_code=_status_for_outcome(result.outcome),
             payload=response_payload,
