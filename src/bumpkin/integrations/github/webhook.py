@@ -62,10 +62,10 @@ from bumpkin.integrations.github.webhook_commands import (
     _resolve_shell_operation as _resolve_shell_operation_impl,
 )
 from bumpkin.integrations.github.webhook_factory import (
-    build_app_webhook_service as _build_app_webhook_service_impl,
+    build_default_app_webhook_service as _build_default_app_webhook_service,
 )
 from bumpkin.integrations.github.webhook_factory import (
-    build_app_webhook_service_from_env as _build_app_webhook_service_from_env_impl,
+    build_default_app_webhook_service_from_env as _build_default_app_webhook_service_from_env,
 )
 from bumpkin.integrations.github.webhook_parsing import (
     _normalize_headers,
@@ -113,6 +113,9 @@ from bumpkin.integrations.github.workflows import (
 
 _HEADER_EVENT_NAME = "x-github-event"
 _DEFERRED_DEPLOY_STATUS_PREFIX = "deferred_deploy:"
+
+build_app_webhook_service = _build_default_app_webhook_service
+build_app_webhook_service_from_env = _build_default_app_webhook_service_from_env
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,38 +517,3 @@ class AppWebhookService:
         )
 
 
-def build_app_webhook_service(
-    *,
-    config: AppRuntimeConfig,
-    state_store: AppStateStore | None = None,
-    delivery_store: DeliveryStore | None = None,
-    reaction_publisher: ReactionPublisher | None = None,
-    tag_publisher: TagPublisher | None = None,
-    release_publisher: ReleasePublisher | None = None,
-    recommendation_runner: RecommendationRunner | None = None,
-    recommendation_publisher: RecommendationPublisher | None = None,
-    installation_token_provider: InstallationTokenProvider | None = None,
-    workflow_dispatcher: WorkflowDispatcher | None = None,
-) -> AppWebhookService:
-    return _build_app_webhook_service_impl(
-        service_factory=AppWebhookService,
-        config=config,
-        state_store=state_store,
-        delivery_store=delivery_store,
-        reaction_publisher=reaction_publisher,
-        tag_publisher=tag_publisher,
-        release_publisher=release_publisher,
-        recommendation_runner=recommendation_runner,
-        recommendation_publisher=recommendation_publisher,
-        installation_token_provider=installation_token_provider,
-        workflow_dispatcher=workflow_dispatcher,
-    )
-
-
-def build_app_webhook_service_from_env(
-    environ: Mapping[str, str] | None = None,
-) -> AppWebhookService:
-    return _build_app_webhook_service_from_env_impl(
-        service_factory=AppWebhookService,
-        environ=environ,
-    )

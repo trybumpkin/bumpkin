@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from bumpkin.integrations.github.ingress import DeliveryStore
 from bumpkin.integrations.github.persistence import (
@@ -22,6 +22,9 @@ from bumpkin.integrations.github.runtime import (
 )
 from bumpkin.integrations.github.tags import TagPublisher
 from bumpkin.integrations.github.workflows import WorkflowDispatcher
+
+if TYPE_CHECKING:
+    from bumpkin.integrations.github.webhook import AppWebhookService
 
 ServiceT_co = TypeVar("ServiceT_co", covariant=True)
 
@@ -92,4 +95,45 @@ def build_app_webhook_service_from_env(
     return build_app_webhook_service(
         service_factory=service_factory,
         config=load_app_runtime_config(environ),
+    )
+
+
+def build_default_app_webhook_service(
+    *,
+    config: AppRuntimeConfig,
+    state_store: AppStateStore | None = None,
+    delivery_store: DeliveryStore | None = None,
+    reaction_publisher: ReactionPublisher | None = None,
+    tag_publisher: TagPublisher | None = None,
+    release_publisher: ReleasePublisher | None = None,
+    recommendation_runner: RecommendationRunner | None = None,
+    recommendation_publisher: RecommendationPublisher | None = None,
+    installation_token_provider: InstallationTokenProviderLike | None = None,
+    workflow_dispatcher: WorkflowDispatcher | None = None,
+) -> AppWebhookService:
+    from bumpkin.integrations.github.webhook import AppWebhookService
+
+    return build_app_webhook_service(
+        service_factory=AppWebhookService,
+        config=config,
+        state_store=state_store,
+        delivery_store=delivery_store,
+        reaction_publisher=reaction_publisher,
+        tag_publisher=tag_publisher,
+        release_publisher=release_publisher,
+        recommendation_runner=recommendation_runner,
+        recommendation_publisher=recommendation_publisher,
+        installation_token_provider=installation_token_provider,
+        workflow_dispatcher=workflow_dispatcher,
+    )
+
+
+def build_default_app_webhook_service_from_env(
+    environ: Mapping[str, str] | None = None,
+) -> AppWebhookService:
+    from bumpkin.integrations.github.webhook import AppWebhookService
+
+    return build_app_webhook_service_from_env(
+        service_factory=AppWebhookService,
+        environ=environ,
     )
