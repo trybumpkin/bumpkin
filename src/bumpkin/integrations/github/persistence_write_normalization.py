@@ -100,9 +100,7 @@ def normalize_release_backlog_write_input(
     normalized_merge_commit_sha = merge_commit_sha.strip()
     if not normalized_merge_commit_sha:
         raise ValueError("merge_commit_sha is required to upsert release backlog item.")
-    normalized_label = _extract_recommended_label(
-        f"Proposed bump (court): {recommended_label}"
-    )
+    normalized_label = _extract_recommended_label(f"Proposed bump (court): {recommended_label}")
     if normalized_label is None:
         raise ValueError("recommended_label must be one of MAJOR, MINOR, PATCH, NO_BUMP.")
     return NormalizedReleaseBacklogWriteInput(
