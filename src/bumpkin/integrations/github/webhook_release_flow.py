@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from bumpkin.integrations.github.persistence import AppStateStore
+from bumpkin.integrations.github.persistence_protocols import (
+    RecommendationReleaseBacklogStore,
+    ReleaseBacklogPersistenceStore,
+)
 from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
 from bumpkin.integrations.github.release_notes import render_release_notes
 from bumpkin.integrations.github.releases import ReleasePublisher, ReleasePublishRequest
@@ -119,7 +122,7 @@ def process_release_command(
     *,
     event: AppEvent,
     response_payload: dict[str, Any],
-    state_store: AppStateStore,
+    state_store: ReleaseBacklogPersistenceStore,
     resolve_tag_publisher: ResolveTagPublisherFn,
     resolve_release_publisher: ResolveReleasePublisherFn,
 ) -> None:
@@ -287,7 +290,7 @@ def process_bump_command_release_side_effects(
     event: AppEvent,
     command: SlashCommand,
     response_payload: dict[str, Any],
-    state_store: AppStateStore,
+    state_store: RecommendationReleaseBacklogStore,
     mismatch_policy: str,
     resolve_tag_publisher: ResolveTagPublisherFn,
 ) -> None:
