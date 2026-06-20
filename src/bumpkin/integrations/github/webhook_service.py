@@ -21,10 +21,19 @@ from bumpkin.integrations.github.recommendations import (
     RecommendationRunner,
 )
 from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
-from bumpkin.integrations.github.types import AppEvent
+from bumpkin.integrations.github.tags import TagPublisher
+from bumpkin.integrations.github.types import AppEvent, SlashCommand
+from bumpkin.integrations.github.webhook_commands import _build_command_reaction
+from bumpkin.integrations.github.webhook_commands import (
+    _is_release_command as _is_release_command_impl,
+)
 from bumpkin.integrations.github.webhook_parsing import (
     _extract_pull_request_metadata,
     _normalize_version_token,
+)
+from bumpkin.integrations.github.webhook_release_flow import (
+    build_release_command_reaction,
+    process_bump_command_release_side_effects,
 )
 
 _DEFERRED_DEPLOY_STATUS_PREFIX = "deferred_deploy:"
@@ -33,9 +42,12 @@ _NEXT_VERSION_LINE_RE = re.compile(r"(?im)^next version\s*:\s*.*$")
 ResolveProviderTokenFn = Callable[[AppEvent | None], str | None]
 ResolveRecommendationPublisherFn = Callable[[AppEvent | None], RecommendationPublisher]
 ReactionPublisherFactory = Callable[[str], ReactionPublisher]
+ResolveTagPublisherFn = Callable[[AppEvent | None], TagPublisher]
 ProcessMergeRecommendationFn = Callable[
     [AppEvent, Mapping[str, object], dict[str, Any] | None], None
 ]
+ProcessReleaseCommandFn = Callable[[AppEvent, dict[str, Any]], None]
+ProcessShellCommandFn = Callable[[AppEvent, Mapping[str, object], SlashCommand, dict[str, Any]], None]
 
 
 def build_event_payload(event: AppEvent) -> dict[str, Any]:
@@ -306,6 +318,124 @@ def rewrite_recommendation_next_version(
     return updated
 
 
+def build_command_payload(command: SlashCommand) -> dict[str, Any]:
+    return {
+        "name": command.name,
+        "args": list(command.args),
+    }
+
+
+def build_deferred_command_response(
+    *,
+    command: SlashCommand,
+    deployment_revision: str | None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "command": build_command_payload(command),
+        "reaction": {
+            "type": "command_deferred",
+            "command": command.name,
+            "applied": False,
+            "message": "Command deferred until a new app deploy is active.",
+        },
+        "command_defer": {
+            "status": "deferred",
+            "reason": "awaiting_new_deploy",
+            "deployment_revision": deployment_revision,
+        },
+    }
+
+
+def handle_shell_mode_command(
+    *,
+    event: AppEvent | None,
+    payload: Mapping[str, object],
+    command: SlashCommand,
+    response_payload: dict[str, Any],
+    configured_reaction_publisher: ReactionPublisher | None,
+    default_reaction_publisher: ReactionPublisher,
+    resolve_provider_token: ResolveProviderTokenFn,
+    process_shell_command_fn: ProcessShellCommandFn,
+) -> None:
+    response_payload["command"] = build_command_payload(command)
+    if event is None:
+        response_payload["reaction"] = {
+            "type": "workflow_dispatch_requested",
+            "applied": False,
+            "message": "Shell commands require repository context.",
+        }
+        return
+
+    process_shell_command_fn(event, payload, command, response_payload)
+    if event.repository is None:
+        return
+    publish_shell_command_reaction(
+        event=event,
+        command_name=command.name,
+        command_args=command.args,
+        command_raw=command.raw,
+        reaction=response_payload["reaction"],
+        response_payload=response_payload,
+        configured_reaction_publisher=configured_reaction_publisher,
+        default_reaction_publisher=default_reaction_publisher,
+        resolve_provider_token=resolve_provider_token,
+    )
+
+
+def handle_issue_comment_command(
+    *,
+    event: AppEvent | None,
+    command: SlashCommand,
+    response_payload: dict[str, Any],
+    mismatch_policy: str,
+    state_store: AppStateStore,
+    resolve_tag_publisher: ResolveTagPublisherFn,
+    process_release_command_fn: ProcessReleaseCommandFn,
+    configured_reaction_publisher: ReactionPublisher | None,
+    default_reaction_publisher: ReactionPublisher,
+    resolve_provider_token: ResolveProviderTokenFn,
+) -> None:
+    response_payload["command"] = build_command_payload(command)
+    if _is_release_command_impl(command):
+        if event is not None and event.repository is not None:
+            process_release_command_fn(event, response_payload)
+        response_payload["reaction"] = build_release_command_reaction(response_payload)
+    elif (
+        command.name == "bump"
+        and event is not None
+        and event.repository is not None
+        and event.pull_request_number is not None
+    ):
+        process_bump_command_release_side_effects(
+            event=event,
+            command=command,
+            response_payload=response_payload,
+            state_store=state_store,
+            mismatch_policy=mismatch_policy,
+            resolve_tag_publisher=resolve_tag_publisher,
+        )
+    else:
+        response_payload["reaction"] = _build_command_reaction(
+            command,
+            recommended_label=None,
+            recommended_current_version=None,
+            mismatch_policy=mismatch_policy,
+        )
+    if event is None or event.repository is None:
+        return
+    publish_issue_comment_reaction(
+        event=event,
+        command_name=command.name,
+        command_args=command.args,
+        command_raw=command.raw,
+        reaction=response_payload["reaction"],
+        response_payload=response_payload,
+        configured_reaction_publisher=configured_reaction_publisher,
+        default_reaction_publisher=default_reaction_publisher,
+        resolve_provider_token=resolve_provider_token,
+    )
+
+
 def publish_command_reaction(
     *,
     event: AppEvent,
@@ -409,8 +539,12 @@ def publish_issue_comment_reaction(
 
 
 __all__ = [
+    "build_command_payload",
+    "build_deferred_command_response",
     "build_event_payload",
     "deferred_status_value",
+    "handle_issue_comment_command",
+    "handle_shell_mode_command",
     "has_pending_self_deferred_merge_for_current_deploy",
     "process_merge_recommendation",
     "publish_issue_comment_reaction",
