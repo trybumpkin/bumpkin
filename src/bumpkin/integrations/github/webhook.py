@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, Self
@@ -17,11 +16,8 @@ from bumpkin.integrations.github.ingress import (
 )
 from bumpkin.integrations.github.persistence import AppStateStore
 from bumpkin.integrations.github.reactions import (
-    GitHubIssueCommentPublisher,
-    GitHubIssueCommentReactionPublisher,
     NoopReactionPublisher,
     ReactionPublisher,
-    ReactionPublishRequest,
 )
 from bumpkin.integrations.github.recommendations import (
     GitHubRecommendationCommentPublisher,
@@ -73,7 +69,6 @@ from bumpkin.integrations.github.webhook_factory import (
 )
 from bumpkin.integrations.github.webhook_parsing import (
     _normalize_headers,
-    _normalize_version_token,
     _status_for_outcome,
 )
 from bumpkin.integrations.github.webhook_release_flow import (
@@ -97,7 +92,16 @@ from bumpkin.integrations.github.webhook_service import (
     process_merge_recommendation as _process_merge_recommendation_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
+    publish_issue_comment_reaction as _publish_issue_comment_reaction_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    publish_shell_command_reaction as _publish_shell_command_reaction_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
     replay_deferred_merge_recommendations_once as _replay_deferred_merge_recommendations_once_impl,
+)
+from bumpkin.integrations.github.webhook_service import (
+    rewrite_recommendation_next_version as _rewrite_recommendation_next_version_impl,
 )
 from bumpkin.integrations.github.webhook_service import (
     should_defer_merge_recommendation as _should_defer_merge_recommendation_impl,
@@ -109,7 +113,6 @@ from bumpkin.integrations.github.workflows import (
 )
 
 _HEADER_EVENT_NAME = "x-github-event"
-_NEXT_VERSION_LINE_RE = re.compile(r"(?im)^next version\s*:\s*.*$")
 _DEFERRED_DEPLOY_STATUS_PREFIX = "deferred_deploy:"
 
 
@@ -133,19 +136,11 @@ def _rewrite_recommendation_next_version(
     current_version: str | None,
     next_version: str | None,
 ) -> str:
-    normalized_current = _normalize_version_token(current_version or "")
-    normalized_next = _normalize_version_token(next_version or "")
-    if normalized_current is None or normalized_next is None:
-        return body
-    line = f"Next version   : v{normalized_current} -> v{normalized_next}"
-    if _NEXT_VERSION_LINE_RE.search(body):
-        updated = _NEXT_VERSION_LINE_RE.sub(line, body, count=1)
-    else:
-        suffix = "" if body.endswith("\n") else "\n"
-        updated = f"{body}{suffix}{line}\n"
-    if not updated.endswith("\n"):
-        updated += "\n"
-    return updated
+    return _rewrite_recommendation_next_version_impl(
+        body=body,
+        current_version=current_version,
+        next_version=next_version,
+    )
 
 
 def _parse_bump_command_args(args: tuple[str, ...]) -> tuple[str, str | None, bool, bool]:
@@ -504,38 +499,17 @@ class AppWebhookService:
                     response_payload=response_payload,
                 )
             if result.event is not None and result.event.repository is not None:
-                publish_request = ReactionPublishRequest(
-                    repository=result.event.repository,
-                    issue_number=result.event.pull_request_number or 0,
+                _publish_shell_command_reaction_impl(
+                    event=result.event,
                     command_name=result.command.name,
                     command_args=result.command.args,
                     command_raw=result.command.raw,
                     reaction=response_payload["reaction"],
-                    comment_id=result.event.comment_id,
-                    comment_html_url=result.event.comment_html_url,
-                    installation_id=result.event.installation_id,
+                    response_payload=response_payload,
+                    configured_reaction_publisher=self._reaction_publisher,
+                    default_reaction_publisher=self._default_reaction_publisher,
+                    resolve_provider_token=self._resolve_provider_token,
                 )
-                try:
-                    reaction_publisher = self._reaction_publisher
-                    if reaction_publisher is None:
-                        token = self._resolve_provider_token(result.event)
-                        if token is not None:
-                            reaction_publisher = GitHubIssueCommentReactionPublisher(token=token)
-                        else:
-                            reaction_publisher = self._default_reaction_publisher
-                    published_url = reaction_publisher.publish(publish_request)
-                except Exception as err:  # noqa: BLE001 - reaction delivery must not fail webhook intake
-                    response_payload["reaction_delivery"] = {
-                        "status": "failed",
-                        "reason": "publisher_error",
-                        "message": str(err).strip() or "reaction publish failed",
-                    }
-                else:
-                    if published_url:
-                        response_payload["reaction_delivery"] = {
-                            "status": "posted",
-                            "url": published_url,
-                        }
             return WebhookResponse(
                 status_code=_status_for_outcome(result.outcome),
                 payload=response_payload,
@@ -576,38 +550,17 @@ class AppWebhookService:
                     mismatch_policy=self._config.bump_mismatch_policy,
                 )
             if result.event is not None and result.event.repository is not None:
-                publish_request = ReactionPublishRequest(
-                    repository=result.event.repository,
-                    issue_number=result.event.pull_request_number or 0,
+                _publish_issue_comment_reaction_impl(
+                    event=result.event,
                     command_name=result.command.name,
                     command_args=result.command.args,
                     command_raw=result.command.raw,
                     reaction=response_payload["reaction"],
-                    comment_id=result.event.comment_id,
-                    comment_html_url=result.event.comment_html_url,
-                    installation_id=result.event.installation_id,
+                    response_payload=response_payload,
+                    configured_reaction_publisher=self._reaction_publisher,
+                    default_reaction_publisher=self._default_reaction_publisher,
+                    resolve_provider_token=self._resolve_provider_token,
                 )
-                try:
-                    reaction_publisher = self._reaction_publisher
-                    if reaction_publisher is None:
-                        token = self._resolve_provider_token(result.event)
-                        if token is not None:
-                            reaction_publisher = GitHubIssueCommentPublisher(token=token)
-                        else:
-                            reaction_publisher = self._default_reaction_publisher
-                    published_url = reaction_publisher.publish(publish_request)
-                except Exception as err:  # noqa: BLE001 - reaction delivery must not fail webhook intake
-                    response_payload["reaction_delivery"] = {
-                        "status": "failed",
-                        "reason": "publisher_error",
-                        "message": str(err).strip() or "reaction publish failed",
-                    }
-                else:
-                    if published_url:
-                        response_payload["reaction_delivery"] = {
-                            "status": "posted",
-                            "url": published_url,
-                        }
         return WebhookResponse(
             status_code=_status_for_outcome(result.outcome),
             payload=response_payload,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -8,6 +9,12 @@ from bumpkin.integrations.github.events import (
     normalize_webhook_event,
 )
 from bumpkin.integrations.github.persistence import AppStateStore
+from bumpkin.integrations.github.reactions import (
+    GitHubIssueCommentPublisher,
+    GitHubIssueCommentReactionPublisher,
+    ReactionPublisher,
+    ReactionPublishRequest,
+)
 from bumpkin.integrations.github.recommendations import (
     MergeRecommendationRequest,
     RecommendationPublisher,
@@ -15,12 +22,17 @@ from bumpkin.integrations.github.recommendations import (
 )
 from bumpkin.integrations.github.release_aggregation import aggregate_release_backlog
 from bumpkin.integrations.github.types import AppEvent
-from bumpkin.integrations.github.webhook_parsing import _extract_pull_request_metadata
+from bumpkin.integrations.github.webhook_parsing import (
+    _extract_pull_request_metadata,
+    _normalize_version_token,
+)
 
 _DEFERRED_DEPLOY_STATUS_PREFIX = "deferred_deploy:"
+_NEXT_VERSION_LINE_RE = re.compile(r"(?im)^next version\s*:\s*.*$")
 
 ResolveProviderTokenFn = Callable[[AppEvent | None], str | None]
 ResolveRecommendationPublisherFn = Callable[[AppEvent | None], RecommendationPublisher]
+ReactionPublisherFactory = Callable[[str], ReactionPublisher]
 ProcessMergeRecommendationFn = Callable[
     [AppEvent, Mapping[str, object], dict[str, Any] | None], None
 ]
@@ -233,7 +245,7 @@ def process_merge_recommendation(
                 backlog_items = []
             if backlog_items:
                 aggregate = aggregate_release_backlog(backlog_items)
-                recommendation_body = _rewrite_recommendation_next_version(
+                recommendation_body = rewrite_recommendation_next_version(
                     body=recommendation_body or recommendation.body,
                     current_version=aggregate.current_version,
                     next_version=aggregate.next_version,
@@ -273,18 +285,126 @@ def process_merge_recommendation(
             }
 
 
-def _rewrite_recommendation_next_version(
+def rewrite_recommendation_next_version(
     *,
     body: str,
     current_version: str | None,
     next_version: str | None,
 ) -> str:
-    from bumpkin.integrations.github.webhook import _rewrite_recommendation_next_version as rewrite
+    normalized_current = _normalize_version_token(current_version or "")
+    normalized_next = _normalize_version_token(next_version or "")
+    if normalized_current is None or normalized_next is None:
+        return body
+    line = f"Next version   : v{normalized_current} -> v{normalized_next}"
+    if _NEXT_VERSION_LINE_RE.search(body):
+        updated = _NEXT_VERSION_LINE_RE.sub(line, body, count=1)
+    else:
+        suffix = "" if body.endswith("\n") else "\n"
+        updated = f"{body}{suffix}{line}\n"
+    if not updated.endswith("\n"):
+        updated += "\n"
+    return updated
 
-    return rewrite(
-        body=body,
-        current_version=current_version,
-        next_version=next_version,
+
+def publish_command_reaction(
+    *,
+    event: AppEvent,
+    command_name: str,
+    command_args: tuple[str, ...],
+    command_raw: str,
+    reaction: dict[str, Any],
+    response_payload: dict[str, Any],
+    configured_reaction_publisher: ReactionPublisher | None,
+    default_reaction_publisher: ReactionPublisher,
+    resolve_provider_token: ResolveProviderTokenFn,
+    publisher_factory: ReactionPublisherFactory,
+) -> None:
+    if event.repository is None:
+        return
+
+    publish_request = ReactionPublishRequest(
+        repository=event.repository,
+        issue_number=event.pull_request_number or 0,
+        command_name=command_name,
+        command_args=command_args,
+        command_raw=command_raw,
+        reaction=reaction,
+        comment_id=event.comment_id,
+        comment_html_url=event.comment_html_url,
+        installation_id=event.installation_id,
+    )
+    try:
+        reaction_publisher = configured_reaction_publisher
+        if reaction_publisher is None:
+            token = resolve_provider_token(event)
+            if token is not None:
+                reaction_publisher = publisher_factory(token)
+            else:
+                reaction_publisher = default_reaction_publisher
+        published_url = reaction_publisher.publish(publish_request)
+    except Exception as err:  # noqa: BLE001 - reaction delivery must not fail webhook intake
+        response_payload["reaction_delivery"] = {
+            "status": "failed",
+            "reason": "publisher_error",
+            "message": str(err).strip() or "reaction publish failed",
+        }
+        return
+    if published_url:
+        response_payload["reaction_delivery"] = {
+            "status": "posted",
+            "url": published_url,
+        }
+
+
+def publish_shell_command_reaction(
+    *,
+    event: AppEvent,
+    command_name: str,
+    command_args: tuple[str, ...],
+    command_raw: str,
+    reaction: dict[str, Any],
+    response_payload: dict[str, Any],
+    configured_reaction_publisher: ReactionPublisher | None,
+    default_reaction_publisher: ReactionPublisher,
+    resolve_provider_token: ResolveProviderTokenFn,
+) -> None:
+    publish_command_reaction(
+        event=event,
+        command_name=command_name,
+        command_args=command_args,
+        command_raw=command_raw,
+        reaction=reaction,
+        response_payload=response_payload,
+        configured_reaction_publisher=configured_reaction_publisher,
+        default_reaction_publisher=default_reaction_publisher,
+        resolve_provider_token=resolve_provider_token,
+        publisher_factory=lambda token: GitHubIssueCommentReactionPublisher(token=token),
+    )
+
+
+def publish_issue_comment_reaction(
+    *,
+    event: AppEvent,
+    command_name: str,
+    command_args: tuple[str, ...],
+    command_raw: str,
+    reaction: dict[str, Any],
+    response_payload: dict[str, Any],
+    configured_reaction_publisher: ReactionPublisher | None,
+    default_reaction_publisher: ReactionPublisher,
+    resolve_provider_token: ResolveProviderTokenFn,
+) -> None:
+    publish_command_reaction(
+        event=event,
+        command_name=command_name,
+        command_args=command_args,
+        command_raw=command_raw,
+        reaction=reaction,
+        response_payload=response_payload,
+        configured_reaction_publisher=configured_reaction_publisher,
+        default_reaction_publisher=default_reaction_publisher,
+        resolve_provider_token=resolve_provider_token,
+        publisher_factory=lambda token: GitHubIssueCommentPublisher(token=token),
     )
 
 
@@ -293,6 +413,9 @@ __all__ = [
     "deferred_status_value",
     "has_pending_self_deferred_merge_for_current_deploy",
     "process_merge_recommendation",
+    "publish_issue_comment_reaction",
+    "publish_shell_command_reaction",
     "replay_deferred_merge_recommendations_once",
+    "rewrite_recommendation_next_version",
     "should_defer_merge_recommendation",
 ]
