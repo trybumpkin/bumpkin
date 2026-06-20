@@ -191,12 +191,14 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert [pull.number for pull in plan.pull_requests] == [12, 14]
     assert "## Release rationale" in plan.preview_notes
     assert (
-        "- PR #12 added exported API `publicThing` in "
-        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py)."
-        in plan.preview_notes
+        "- PR #12 introduced `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
+        "expanding the public API." in plan.preview_notes
     )
     assert (
-        "- No exported APIs were removed or narrowed in this release batch." in plan.preview_notes
+        "- Overall, this batch adds public API without breaking existing consumers, so it warrants "
+        "a MINOR bump. Lower-severity fixes are also included in this batch, but they do not "
+        "change the overall MINOR outcome (PR #14)." in plan.preview_notes
     )
     assert "## Versioning context" in plan.preview_notes
     assert "- Detected versioning scheme: semver." in plan.preview_notes
@@ -281,9 +283,9 @@ def test_prepare_release_plan_keeps_all_preview_rationale_and_evidence_entries(
     assert "Included PRs: 4" in plan.preview_notes
     for pr_number in (12, 14, 16, 18):
         assert (
-            f"- PR #{pr_number} added exported API `publicThing` in "
-            "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py)."
-            in plan.preview_notes
+            f"- PR #{pr_number} introduced `publicThing` in "
+            "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
+            "expanding the public API." in plan.preview_notes
         )
         assert (
             f"- PR #{pr_number}: [`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py) "
@@ -291,7 +293,7 @@ def test_prepare_release_plan_keeps_all_preview_rationale_and_evidence_entries(
         )
 
 
-def test_prepare_release_plan_uses_rewritten_preview_rationale(monkeypatch) -> None:
+def test_prepare_release_plan_uses_supplied_preview_rationale_lines(monkeypatch) -> None:
     pr_12 = _pull_request(
         number=12,
         title="Add release-scoped aggregation",
@@ -332,7 +334,7 @@ def test_prepare_release_plan_uses_rewritten_preview_rationale(monkeypatch) -> N
         "- This batch stays additive because no exported APIs were removed or narrowed."
         in plan.preview_notes
     )
-    assert "added exported API `publicThing`" not in plan.preview_notes
+    assert "introduced `publicThing`" not in plan.preview_notes
 
 
 def test_prepare_release_plan_returns_empty_preview_when_scope_has_no_pull_requests(
@@ -720,8 +722,9 @@ def test_run_release_job_preview_writes_outputs_and_summary(tmp_path, monkeypatc
         "Release type: MINOR\n"
         "Included PRs: 1\n\n"
         "## Release rationale\n"
-        "- PR #12 added exported API `publicThing` in "
-        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py).\n"
+        "- PR #12 introduced `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
+        "expanding the public API.\n"
     )
     plan = ReleasePlan(
         repository="acme/repo",
@@ -834,8 +837,9 @@ def test_run_release_job_preview_builds_repository_client_at_entry_point(
 def test_run_release_job_publish_writes_publish_outputs(tmp_path, monkeypatch) -> None:
     rendered_preview_notes = (
         "# v1.3.0\n\n## Release rationale\n"
-        "- PR #12 added exported API `publicThing` in "
-        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py).\n"
+        "- PR #12 introduced `publicThing` in "
+        "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py), "
+        "expanding the public API.\n"
     )
     published_release_body = "## Features\n- public change\n"
     plan = ReleasePlan(

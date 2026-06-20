@@ -244,6 +244,7 @@ def prepare_release_plan(
             release_label=None,
             recommendations=recommendations,
             target_sha=target_sha,
+            notes=notes,
         )
         preview_notes = render_preview_notes_fn(
             target_sha=target_sha,
@@ -304,6 +305,7 @@ def prepare_release_plan(
         release_label=release_label,
         recommendations=recommendations,
         target_sha=target_sha,
+        notes=notes,
     )
     preview_notes = render_preview_notes_fn(
         target_sha=target_sha,
