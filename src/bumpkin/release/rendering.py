@@ -4,6 +4,7 @@ import urllib.parse
 
 from bumpkin.release.analysis import _normalize_label
 from bumpkin.release.models import ReleaseRecommendationRecord
+from bumpkin.release.rationale import _build_release_why_lines
 
 _SECTION_BY_LABEL = {
     "MAJOR": "Breaking Changes",
@@ -54,22 +55,6 @@ def _release_label_headline(
     return f"{count} merged PR(s) contributed to this release decision."
 
 
-def _parse_evidence_line(raw_line: str) -> dict[str, str]:
-    parts = [part.strip() for part in raw_line.split("|") if part.strip()]
-    if not parts:
-        return {}
-    parsed: dict[str, str] = {"path": parts[0]}
-    for part in parts[1:]:
-        key, sep, value = part.partition("=")
-        if not sep:
-            continue
-        normalized_value = " ".join(value.split()).strip()
-        if not normalized_value:
-            continue
-        parsed[key.strip().lower()] = normalized_value
-    return parsed
-
-
 def _format_preview_file_link(*, repository: str, target_sha: str, path: str) -> str:
     normalized_path = path.strip().lstrip("/")
     if not repository.strip() or not target_sha.strip() or not normalized_path:
@@ -78,99 +63,6 @@ def _format_preview_file_link(*, repository: str, target_sha: str, path: str) ->
     return (
         f"[`{normalized_path}`](https://github.com/{repository}/blob/{target_sha}/{encoded_path})"
     )
-
-
-def _format_rationale_sentence(
-    *,
-    record: ReleaseRecommendationRecord,
-    evidence: dict[str, str],
-    target_sha: str,
-) -> str | None:
-    path = evidence.get("path")
-    rule = evidence.get("rule", "").lower()
-    symbol = evidence.get("symbol", "").strip()
-    scope = evidence.get("scope", "").lower()
-    pr_number = record.pull_request.number
-
-    if not path:
-        return None
-    linked_path = _format_preview_file_link(
-        repository=record.pull_request.repository,
-        target_sha=target_sha,
-        path=path,
-    )
-    formatted_symbol = f"`{symbol}`" if symbol else ""
-
-    if rule == "export_symbol_removed":
-        if symbol:
-            return f"PR #{pr_number} removed exported API {formatted_symbol} in {linked_path}."
-        return f"PR #{pr_number} removed a public API surface in {linked_path}."
-    if rule == "export_symbol_changed":
-        if symbol:
-            return f"PR #{pr_number} changed exported API {formatted_symbol} in {linked_path}."
-        return f"PR #{pr_number} changed a public API surface in {linked_path}."
-    if rule == "export_symbol_added":
-        if symbol:
-            return f"PR #{pr_number} added exported API {formatted_symbol} in {linked_path}."
-        return f"PR #{pr_number} added a public API surface in {linked_path}."
-    if scope == "public_api":
-        return f"PR #{pr_number} changed public API behavior in {linked_path}."
-    if scope == "runtime":
-        return f"PR #{pr_number} changed runtime behavior in {linked_path}."
-    return f"PR #{pr_number} changed code in {linked_path}."
-
-
-def _fallback_rationale_sentence(record: ReleaseRecommendationRecord) -> str:
-    summary = " ".join((record.summary or "").split()).strip()
-    if summary:
-        if summary.endswith("."):
-            return f"PR #{record.pull_request.number}: {summary}"
-        return f"PR #{record.pull_request.number}: {summary}."
-    title = record.pull_request.title.rstrip(".")
-    return f"PR #{record.pull_request.number} contributed to this release decision through {title}."
-
-
-def _build_release_why_lines(
-    *,
-    release_label: str | None,
-    recommendations: list[ReleaseRecommendationRecord],
-    target_sha: str,
-) -> list[str]:
-    normalized_label = _normalize_label(release_label)
-    if normalized_label is None:
-        return []
-    matching_records = _top_label_records(recommendations, normalized_label)
-    if not matching_records:
-        return []
-    lines: list[str] = []
-    seen: set[str] = set()
-    for record in matching_records:
-        sentence: str | None = None
-        for raw_line in record.evidence_lines:
-            sentence = _format_rationale_sentence(
-                record=record,
-                evidence=_parse_evidence_line(raw_line),
-                target_sha=target_sha,
-            )
-            if sentence:
-                break
-        if sentence is None:
-            sentence = _fallback_rationale_sentence(record)
-        if sentence in seen:
-            continue
-        seen.add(sentence)
-        lines.append(sentence)
-    if normalized_label == "MAJOR":
-        lines.append("Breaking public APIs were removed or changed in this release batch.")
-    elif normalized_label == "MINOR":
-        lines.append("No exported APIs were removed or narrowed in this release batch.")
-    elif normalized_label == "PATCH":
-        lines.append(
-            "No public API additions or breaking removals were detected in this release batch."
-        )
-    elif normalized_label == "NO_BUMP":
-        lines.append("All included pull requests resolved to NO_BUMP.")
-    return lines
 
 
 def _humanize_evidence_line(
@@ -338,6 +230,7 @@ def _render_preview_notes(
     recommendations: list[ReleaseRecommendationRecord],
     notes: tuple[str, ...] | list[str] = (),
     published_release_body: str,
+    rationale_lines: list[str] | None = None,
 ) -> str:
     heading = next_tag or "Release Preview"
     lines: list[str] = [f"# {heading}", ""]
@@ -349,11 +242,13 @@ def _render_preview_notes(
         lines.append(f"Release type: {release_label}")
     lines.append(f"Included PRs: {len(recommendations)}")
 
-    why_lines = _build_release_why_lines(
-        release_label=release_label,
-        recommendations=recommendations,
-        target_sha=target_sha,
-    )
+    why_lines = rationale_lines
+    if why_lines is None:
+        why_lines = _build_release_why_lines(
+            release_label=release_label,
+            recommendations=recommendations,
+            target_sha=target_sha,
+        )
     if why_lines:
         lines.extend(["", "## Release rationale"])
         lines.extend(f"- {line}" for line in why_lines)

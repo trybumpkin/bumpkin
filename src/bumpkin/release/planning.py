@@ -22,6 +22,7 @@ AggregateReleaseLabelFn = Callable[[list[ReleaseRecommendationRecord]], str | No
 RenderPublicReleaseBodyFn = Callable[[list[ReleaseRecommendationRecord]], str]
 RenderPreviewNotesFn = Callable[..., str]
 RenderNoReleasePreviewNotesFn = Callable[..., str]
+ResolvePreviewRationaleLinesFn = Callable[..., list[str]]
 DetectNextVersionFn = Callable[[str, str | None], tuple[str | None, str | None, list[str]]]
 RunGitFn = Callable[[list[str]], str]
 
@@ -174,6 +175,7 @@ def prepare_release_plan(
     render_public_release_body_fn: RenderPublicReleaseBodyFn,
     render_preview_notes_fn: RenderPreviewNotesFn,
     render_no_release_preview_notes_fn: RenderNoReleasePreviewNotesFn,
+    resolve_preview_rationale_lines_fn: ResolvePreviewRationaleLinesFn,
     recommendation_runner_factory: Callable[[], RecommendationRunner],
     summary_line_re: re.Pattern[str],
     reasoning_line_re: re.Pattern[str],
@@ -238,6 +240,11 @@ def prepare_release_plan(
             "Release scope contains unresolved pull requests that need review before publish."
         )
         published_release_body = render_public_release_body_fn(recommendations)
+        rationale_lines = resolve_preview_rationale_lines_fn(
+            release_label=None,
+            recommendations=recommendations,
+            target_sha=target_sha,
+        )
         preview_notes = render_preview_notes_fn(
             target_sha=target_sha,
             previous_tag=previous_tag,
@@ -246,6 +253,7 @@ def prepare_release_plan(
             recommendations=recommendations,
             notes=notes,
             published_release_body=published_release_body,
+            rationale_lines=rationale_lines,
         )
         return ReleasePlan(
             status="needs_review",
@@ -292,6 +300,11 @@ def prepare_release_plan(
     if not next_tag:
         raise RuntimeError("Could not compute the next release tag from the current scope.")
     published_release_body = render_public_release_body_fn(recommendations)
+    rationale_lines = resolve_preview_rationale_lines_fn(
+        release_label=release_label,
+        recommendations=recommendations,
+        target_sha=target_sha,
+    )
     preview_notes = render_preview_notes_fn(
         target_sha=target_sha,
         previous_tag=previous_tag,
@@ -300,6 +313,7 @@ def prepare_release_plan(
         recommendations=recommendations,
         notes=notes,
         published_release_body=published_release_body,
+        rationale_lines=rationale_lines,
     )
     return ReleasePlan(
         status="planned",
