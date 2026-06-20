@@ -18,22 +18,34 @@ from bumpkin.integrations.github.persistence_models import (
 )
 from bumpkin.integrations.github.persistence_protocols import DEFAULT_EVENT_STATUS
 from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    extract_comment_body as _extract_comment_body,
-)
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
-    extract_recommended_current_version as _extract_recommended_current_version,
-)
-from bumpkin.integrations.github.persistence_recommendation_parsing import (
     extract_recommended_label as _extract_recommended_label,
 )
 from bumpkin.integrations.github.persistence_recommendation_parsing import (
     normalize_semver_token as _normalize_semver_token,
 )
-from bumpkin.integrations.github.persistence_serialization import (
-    clean_optional_text as _clean_optional_text,
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_approval_record as _build_approval_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_audit_log_record as _build_audit_log_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_publish_decision_record as _build_publish_decision_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_recommendation_snapshot_from_row as _build_recommendation_snapshot_from_row,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_release_backlog_item as _build_release_backlog_item,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    build_stored_event_record as _build_stored_event_record,
+)
+from bumpkin.integrations.github.persistence_record_parsing import (
+    extract_recommendation_snapshot_from_payload as _extract_recommendation_snapshot_from_payload,
 )
 from bumpkin.integrations.github.persistence_serialization import (
-    from_iso as _from_iso,
+    clean_optional_text as _clean_optional_text,
 )
 from bumpkin.integrations.github.persistence_serialization import (
     json_dump as _json_dump,
@@ -141,22 +153,7 @@ class SqliteAppStateStore:
         row = cursor.fetchone()
         if row is None:
             return None
-        return StoredEventRecord(
-            provider=str(row["provider"]),
-            provider_event_id=str(row["provider_event_id"]),
-            event_type=str(row["event_type"]),
-            action=str(row["action"]) if row["action"] is not None else None,
-            repository=str(row["repository"]) if row["repository"] is not None else None,
-            pull_request_number=int(row["pull_request_number"])
-            if row["pull_request_number"] is not None
-            else None,
-            sender_login=str(row["sender_login"]) if row["sender_login"] is not None else None,
-            received_at=_from_iso(str(row["received_at"])),
-            payload=json.loads(str(row["payload"])),
-            payload_hash=str(row["payload_hash"]),
-            headers_hash=str(row["headers_hash"]),
-            status=str(row["status"]),
-        )
+        return _build_stored_event_record(dict(row))
 
     def update_event_status(
         self,
@@ -216,25 +213,7 @@ class SqliteAppStateStore:
             (provider, repository, max(1, int(limit))),
         )
         rows = cursor.fetchall()
-        return [
-            StoredEventRecord(
-                provider=str(row["provider"]),
-                provider_event_id=str(row["provider_event_id"]),
-                event_type=str(row["event_type"]),
-                action=str(row["action"]) if row["action"] is not None else None,
-                repository=str(row["repository"]) if row["repository"] is not None else None,
-                pull_request_number=int(row["pull_request_number"])
-                if row["pull_request_number"] is not None
-                else None,
-                sender_login=str(row["sender_login"]) if row["sender_login"] is not None else None,
-                received_at=_from_iso(str(row["received_at"])),
-                payload=json.loads(str(row["payload"])),
-                payload_hash=str(row["payload_hash"]),
-                headers_hash=str(row["headers_hash"]),
-                status=str(row["status"]),
-            )
-            for row in rows
-        ]
+        return [_build_stored_event_record(dict(row)) for row in rows]
 
     def latest_recommended_label_for_pr(
         self,
@@ -267,16 +246,7 @@ class SqliteAppStateStore:
         )
         snapshot_row = snapshot_cursor.fetchone()
         if snapshot_row is not None:
-            label = str(snapshot_row["label"]).strip().upper()
-            current_version = (
-                _normalize_semver_token(str(snapshot_row["current_version"]))
-                if snapshot_row["current_version"] is not None
-                else None
-            )
-            return RecommendationSnapshot(
-                label=label,
-                current_version=current_version,
-            )
+            return _build_recommendation_snapshot_from_row(dict(snapshot_row))
 
         cursor = self._connection.execute(
             """
@@ -293,18 +263,9 @@ class SqliteAppStateStore:
         for row in cursor:
             raw_payload = str(row["payload"])
             payload = json.loads(raw_payload)
-            if not isinstance(payload, dict):
-                continue
-            body = _extract_comment_body(payload)
-            if not body:
-                continue
-            label = _extract_recommended_label(body)
-            if label is not None:
-                current_version = _extract_recommended_current_version(body)
-                return RecommendationSnapshot(
-                    label=label,
-                    current_version=current_version,
-                )
+            snapshot = _extract_recommendation_snapshot_from_payload(payload)
+            if snapshot is not None:
+                return snapshot
         return None
 
     def record_recommendation_snapshot(
@@ -509,43 +470,7 @@ class SqliteAppStateStore:
             (normalized_repository, max(1, int(limit))),
         )
         rows = cursor.fetchall()
-        return [
-            ReleaseBacklogItem(
-                id=int(row["id"]),
-                repository=str(row["repository"]),
-                pull_request_number=int(row["pull_request_number"]),
-                merge_commit_sha=str(row["merge_commit_sha"]),
-                recommended_label=str(row["recommended_label"]),
-                recommended_current_version=(
-                    _normalize_semver_token(str(row["recommended_current_version"]))
-                    if row["recommended_current_version"] is not None
-                    else None
-                ),
-                pull_request_title=str(row["pull_request_title"])
-                if row["pull_request_title"] is not None
-                else None,
-                pull_request_author_login=str(row["pull_request_author_login"])
-                if row["pull_request_author_login"] is not None
-                else None,
-                pull_request_url=str(row["pull_request_url"])
-                if row["pull_request_url"] is not None
-                else None,
-                release_summary=str(row["release_summary"])
-                if row["release_summary"] is not None
-                else None,
-                source_event_id=str(row["source_event_id"])
-                if row["source_event_id"] is not None
-                else None,
-                merged_at=_from_iso(str(row["merged_at"])),
-                included_in_release_tag=str(row["included_in_release_tag"])
-                if row["included_in_release_tag"] is not None
-                else None,
-                included_at=_from_iso(str(row["included_at"]))
-                if row["included_at"] is not None
-                else None,
-            )
-            for row in rows
-        ]
+        return [_build_release_backlog_item(dict(row)) for row in rows]
 
     def mark_release_backlog_items_included(
         self,
@@ -671,14 +596,7 @@ class SqliteAppStateStore:
         row = cursor.fetchone()
         if row is None:
             return None
-        return ApprovalRecord(
-            repository=str(row["repository"]),
-            pull_request_number=int(row["pull_request_number"]),
-            approved_label=str(row["approved_label"]),
-            recommendation_hash=str(row["recommendation_hash"]),
-            approved_by=str(row["approved_by"]),
-            approved_at=_from_iso(str(row["approved_at"])),
-        )
+        return _build_approval_record(dict(row))
 
     def delete_approvals(self, *, repository: str, pull_request_number: int) -> int:
         cursor = self._connection.execute(
@@ -777,21 +695,7 @@ class SqliteAppStateStore:
         row = cursor.fetchone()
         if row is None:
             return None
-        guard_reasons_payload = json.loads(str(row["guard_reasons"]))
-        guard_reasons_raw = guard_reasons_payload.get("guard_reasons", [])
-        guard_reasons = tuple(
-            item for item in guard_reasons_raw if isinstance(item, str) and item.strip()
-        )
-        return PublishDecisionRecord(
-            repository=str(row["repository"]),
-            pull_request_number=int(row["pull_request_number"]),
-            commit_sha=str(row["commit_sha"]),
-            allowed=bool(row["allowed"]),
-            reason=str(row["reason"]),
-            guard_reasons=guard_reasons,
-            evaluated_at=_from_iso(str(row["evaluated_at"])),
-            policy_snapshot=json.loads(str(row["policy_snapshot"])),
-        )
+        return _build_publish_decision_record(dict(row))
 
     def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]:
         cursor = self._connection.execute(
@@ -804,17 +708,7 @@ class SqliteAppStateStore:
             (entity_type, entity_id),
         )
         rows = cursor.fetchall()
-        return [
-            AuditLogRecord(
-                entity_type=str(row["entity_type"]),
-                entity_id=str(row["entity_id"]),
-                action=str(row["action"]),
-                actor=str(row["actor"]),
-                timestamp=_from_iso(str(row["timestamp"])),
-                details=json.loads(str(row["details"])),
-            )
-            for row in rows
-        ]
+        return [_build_audit_log_record(dict(row)) for row in rows]
 
     def _record_audit(
         self,
