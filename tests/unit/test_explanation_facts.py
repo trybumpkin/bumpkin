@@ -277,3 +277,28 @@ def test_build_delta_rows_marks_runtime_contract_unchanged_as_unchanged_action()
         ],
     )
     assert rows[0]["action"] == "unchanged"
+
+
+def test_build_delta_rows_keeps_exported_constant_symbol_targets() -> None:
+    rows = facts_module.build_delta_rows(
+        advisory_label="MINOR",
+        records=[
+            {
+                "rule": "export_symbol_added",
+                "severity": "MINOR",
+                "path": "src/python_test/api.py",
+                "snippet": 'DEFAULT_GREETING = "Hello"',
+            }
+        ],
+    )
+    assert rows == [
+        {
+            "path": "src/python_test/api.py",
+            "rule": "export_symbol_added",
+            "action": "added",
+            "target": "DEFAULT_GREETING",
+            "impact_scope": "public_api",
+            "suggested_bump": "MINOR",
+            "severity": "MINOR",
+        }
+    ]

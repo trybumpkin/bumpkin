@@ -230,6 +230,37 @@ def test_comment_format_includes_exported_constant_symbol_in_findings() -> None:
     assert "symbol=DEFAULT_GREETING" in body
 
 
+def test_comment_format_includes_exported_constant_symbol_from_explainability_rows() -> None:
+    body = format_recommendation_comment(
+        result={
+            "status": "classified",
+            "label": "MINOR",
+            "confidence": "high",
+            "reasoning": "Deterministic Python exported API analysis produced findings.",
+            "changelog": "feat: export default greeting constant",
+        },
+        notes=[],
+        mode="github-models",
+        explainability_rows=[
+            {
+                "path": "src/python_test/api.py",
+                "rule": "export_symbol_added",
+                "action": "added",
+                "target": "DEFAULT_GREETING",
+                "impact_scope": "public_api",
+                "suggested_bump": "MINOR",
+                "severity": "MINOR",
+            }
+        ],
+    )
+
+    assert (
+        "- src/python_test/api.py | rule=export_symbol_added | scope=public_api | suggested=MINOR"
+        in body
+    )
+    assert "symbol=DEFAULT_GREETING" in body
+
+
 def test_comment_format_includes_analysis_state_for_classified_result() -> None:
     body = format_recommendation_comment(
         result={
