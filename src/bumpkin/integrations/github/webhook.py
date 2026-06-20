@@ -515,5 +515,3 @@ class AppWebhookService:
             status_code=_status_for_outcome(result.outcome),
             payload=response_payload,
         )
-
-
