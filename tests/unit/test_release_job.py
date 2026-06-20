@@ -227,6 +227,70 @@ def test_prepare_release_plan_builds_release_batch(monkeypatch) -> None:
     assert "@alice, @bob" in plan.published_release_body
 
 
+def test_prepare_release_plan_keeps_all_preview_rationale_and_evidence_entries(
+    monkeypatch,
+) -> None:
+    pull_requests = {
+        12: _pull_request(
+            number=12,
+            title="Add release-scoped aggregation",
+            author_login="alice",
+            merged_at=datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+        ),
+        14: _pull_request(
+            number=14,
+            title="Add release notes digest",
+            author_login="bob",
+            merged_at=datetime(2026, 6, 2, 10, 0, tzinfo=UTC),
+        ),
+        16: _pull_request(
+            number=16,
+            title="Add preview metadata output",
+            author_login="carol",
+            merged_at=datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
+        ),
+        18: _pull_request(
+            number=18,
+            title="Add release summary sections",
+            author_login="dave",
+            merged_at=datetime(2026, 6, 4, 10, 0, tzinfo=UTC),
+        ),
+    }
+    client = _FakeRepositoryClient(
+        tags=["v1.2.3"],
+        commits=["c1", "c2", "c3", "c4"],
+        pulls_by_commit={"c1": [12], "c2": [14], "c3": [16], "c4": [18]},
+        pull_requests=pull_requests,
+    )
+    runner = _FakeRecommendationRunner({12: "MINOR", 14: "MINOR", 16: "MINOR", 18: "MINOR"})
+
+    monkeypatch.setattr(
+        "bumpkin.release_job._resolve_target_ref", lambda _target: ("main", "sha-main")
+    )
+    monkeypatch.setattr("bumpkin.release_job.list_tags", list)
+
+    plan = prepare_release_plan(
+        repository="acme/repo",
+        github_token="token-123",
+        target_ref="main",
+        base_tag="",
+        client=client,
+        recommendation_runner=runner,
+    )
+
+    assert "Included PRs: 4" in plan.preview_notes
+    for pr_number in (12, 14, 16, 18):
+        assert (
+            f"- PR #{pr_number} added exported API `publicThing` in "
+            "[`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py)."
+            in plan.preview_notes
+        )
+        assert (
+            f"- PR #{pr_number}: [`src/api.py`](https://github.com/acme/repo/blob/sha-main/src/api.py) "
+            "- export symbol added; public api; `publicThing`" in plan.preview_notes
+        )
+
+
 def test_prepare_release_plan_returns_empty_preview_when_scope_has_no_pull_requests(
     monkeypatch,
 ) -> None:
