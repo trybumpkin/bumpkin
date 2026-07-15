@@ -207,22 +207,12 @@ def prepare_release_plan(
         head_ref=resolved_target_ref,
     )
     if not pull_requests:
-        return ReleasePlan(
-            status="skipped",
+        return _build_skipped_scope_plan(
             repository=normalized_repository,
             target_ref=resolved_target_ref,
             target_sha=target_sha,
             previous_tag=previous_tag,
-            next_tag=None,
-            release_label=None,
-            pull_requests=(),
-            recommendations=(),
-            preview_notes=(
-                f"# Release Preview\n\nPrevious tag: {previous_tag}\nIncluded PRs: 0\n\n"
-                "No merged pull requests were found in this release scope.\n"
-            ),
-            published_release_body="",
-            notes=tuple(notes),
+            notes=notes,
         )
 
     runner = recommendation_runner or recommendation_runner_factory()
@@ -256,19 +246,15 @@ def prepare_release_plan(
             published_release_body=published_release_body,
             rationale_lines=rationale_lines,
         )
-        return ReleasePlan(
-            status="needs_review",
+        return _build_review_scope_plan(
             repository=normalized_repository,
             target_ref=resolved_target_ref,
             target_sha=target_sha,
             previous_tag=previous_tag,
-            next_tag=None,
-            release_label=None,
-            pull_requests=tuple(pull_requests),
-            recommendations=tuple(recommendations),
+            pull_requests=pull_requests,
+            recommendations=recommendations,
             preview_notes=preview_notes,
-            published_release_body="",
-            notes=tuple(notes),
+            notes=notes,
         )
     if release_label is None:
         raise RuntimeError("Could not determine an aggregate release label.")
@@ -284,19 +270,16 @@ def prepare_release_plan(
             recommendations=recommendations,
             notes=notes,
         )
-        return ReleasePlan(
-            status="skipped",
+        return _build_no_release_plan(
             repository=normalized_repository,
             target_ref=resolved_target_ref,
             target_sha=target_sha,
             previous_tag=previous_tag,
-            next_tag=None,
             release_label=release_label,
-            pull_requests=tuple(pull_requests),
-            recommendations=tuple(recommendations),
+            pull_requests=pull_requests,
+            recommendations=recommendations,
             preview_notes=preview_notes,
-            published_release_body="",
-            notes=tuple(notes),
+            notes=notes,
         )
     if not next_tag:
         raise RuntimeError("Could not compute the next release tag from the current scope.")
@@ -317,10 +300,116 @@ def prepare_release_plan(
         published_release_body=published_release_body,
         rationale_lines=rationale_lines,
     )
-    return ReleasePlan(
-        status="planned",
+    return _build_planned_release_plan(
         repository=normalized_repository,
         target_ref=resolved_target_ref,
+        target_sha=target_sha,
+        previous_tag=previous_tag,
+        next_tag=next_tag,
+        release_label=release_label,
+        pull_requests=pull_requests,
+        recommendations=recommendations,
+        preview_notes=preview_notes,
+        published_release_body=published_release_body,
+        notes=notes,
+    )
+
+
+def _build_skipped_scope_plan(
+    *, repository: str, target_ref: str, target_sha: str, previous_tag: str, notes: list[str]
+) -> ReleasePlan:
+    return ReleasePlan(
+        status="skipped",
+        repository=repository,
+        target_ref=target_ref,
+        target_sha=target_sha,
+        previous_tag=previous_tag,
+        next_tag=None,
+        release_label=None,
+        pull_requests=(),
+        recommendations=(),
+        preview_notes=(
+            f"# Release Preview\n\nPrevious tag: {previous_tag}\nIncluded PRs: 0\n\n"
+            "No merged pull requests were found in this release scope.\n"
+        ),
+        published_release_body="",
+        notes=tuple(notes),
+    )
+
+
+def _build_review_scope_plan(
+    *,
+    repository: str,
+    target_ref: str,
+    target_sha: str,
+    previous_tag: str,
+    pull_requests: list[ReleaseScopedPullRequest],
+    recommendations: list[ReleaseRecommendationRecord],
+    preview_notes: str,
+    notes: list[str],
+) -> ReleasePlan:
+    return ReleasePlan(
+        status="needs_review",
+        repository=repository,
+        target_ref=target_ref,
+        target_sha=target_sha,
+        previous_tag=previous_tag,
+        next_tag=None,
+        release_label=None,
+        pull_requests=tuple(pull_requests),
+        recommendations=tuple(recommendations),
+        preview_notes=preview_notes,
+        published_release_body="",
+        notes=tuple(notes),
+    )
+
+
+def _build_no_release_plan(
+    *,
+    repository: str,
+    target_ref: str,
+    target_sha: str,
+    previous_tag: str,
+    release_label: str,
+    pull_requests: list[ReleaseScopedPullRequest],
+    recommendations: list[ReleaseRecommendationRecord],
+    preview_notes: str,
+    notes: list[str],
+) -> ReleasePlan:
+    return ReleasePlan(
+        status="skipped",
+        repository=repository,
+        target_ref=target_ref,
+        target_sha=target_sha,
+        previous_tag=previous_tag,
+        next_tag=None,
+        release_label=release_label,
+        pull_requests=tuple(pull_requests),
+        recommendations=tuple(recommendations),
+        preview_notes=preview_notes,
+        published_release_body="",
+        notes=tuple(notes),
+    )
+
+
+def _build_planned_release_plan(
+    *,
+    repository: str,
+    target_ref: str,
+    target_sha: str,
+    previous_tag: str,
+    next_tag: str,
+    release_label: str,
+    pull_requests: list[ReleaseScopedPullRequest],
+    recommendations: list[ReleaseRecommendationRecord],
+    preview_notes: str,
+    published_release_body: str,
+    notes: list[str],
+) -> ReleasePlan:
+    return ReleasePlan(
+        status="planned",
+        repository=repository,
+        target_ref=target_ref,
         target_sha=target_sha,
         previous_tag=previous_tag,
         next_tag=next_tag,

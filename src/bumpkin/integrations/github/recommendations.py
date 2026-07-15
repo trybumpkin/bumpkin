@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from bumpkin.integrations.github.http_client import DEFAULT_GITHUB_HTTP_CLIENT, GitHubHttpClient
 from bumpkin.integrations.github.types import AppEvent
-from bumpkin.io.tokens import is_valid_models_endpoint
+from bumpkin.io.tokens import is_valid_models_endpoint, resolve_models_endpoint
 from bumpkin.orchestrator import pipeline as orchestrator_pipeline
 
 _PROPOSED_BUMP_RE = re.compile(r"(?im)^proposed bump \(court\):\s*(?P<label>[^\n\r(]+)")
@@ -79,6 +79,19 @@ class _ApiDiffResult:
     scope_overlap_files: int
     scope_unexpected_files: int
     scope_missing_files: int
+    notes: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _ApiDiffScope:
+    changed_paths: list[str]
+    file_blocks: dict[str, str]
+    kept_paths: list[str]
+    ignored_count: int
+    allowlist_count: int
+    overlap_count: int
+    unexpected_count: int
+    missing_count: int
     notes: list[str]
 
 
@@ -245,40 +258,13 @@ def _build_api_diff_result(
     allowed_files: list[str] | None,
     token_cap: int,
 ) -> _ApiDiffResult:
-    notes = ["Using GitHub API PR files fallback because local git refs are unavailable."]
-    normalized_allowlist = {
-        _normalize_repo_path(path) for path in (allowed_files or []) if _normalize_repo_path(path)
-    }
-    changed_paths: list[str] = []
-    file_blocks: dict[str, str] = {}
-
-    for item in pr_files:
-        path, block = _build_git_block_from_pr_file(item)
-        changed_paths.append(path)
-        file_blocks[path] = block
-
-    overlap_paths = {path for path in changed_paths if path in normalized_allowlist}
-    unexpected_paths = [
-        path for path in changed_paths if normalized_allowlist and path not in normalized_allowlist
-    ]
-    scope_missing_files = (
-        max(0, len(normalized_allowlist) - len(overlap_paths)) if normalized_allowlist else 0
+    scope = _build_api_diff_scope(
+        pr_files=pr_files,
+        ignore_patterns=ignore_patterns,
+        allowed_files=allowed_files,
     )
-
-    if normalized_allowlist:
-        scoped_changed = [path for path in changed_paths if path in normalized_allowlist]
-        notes.append(
-            "Scope guard: "
-            f"matched {len(scoped_changed)}/{len(changed_paths)} api-changed file(s) against PR allowlist "
-            f"(unexpected={len(unexpected_paths)}, missing={scope_missing_files})."
-        )
-    else:
-        scoped_changed = list(changed_paths)
-
-    kept = [path for path in scoped_changed if not _is_ignored_path(path, ignore_patterns)]
-    ignored_count = max(0, len(scoped_changed) - len(kept))
-    if not kept:
-        notes.append("Only ignored files changed; defaulting to NO_BUMP recommendation.")
+    if not scope.kept_paths:
+        notes = [*scope.notes, "Only ignored files changed; defaulting to NO_BUMP recommendation."]
         return _ApiDiffResult(
             from_ref=from_ref,
             to_ref=to_ref,
@@ -287,22 +273,22 @@ def _build_api_diff_result(
             truncated=False,
             analyzed_files=[],
             file_units=[],
-            changed_files_total=len(changed_paths),
-            ignored_files_total=ignored_count,
+            changed_files_total=len(scope.changed_paths),
+            ignored_files_total=scope.ignored_count,
             approx_prompt_tokens=0,
             approx_full_tokens=0,
             capped_files=0,
-            scope_allowlist_files_total=len(normalized_allowlist),
-            scope_overlap_files=len(overlap_paths),
-            scope_unexpected_files=len(unexpected_paths),
-            scope_missing_files=scope_missing_files,
+            scope_allowlist_files_total=scope.allowlist_count,
+            scope_overlap_files=scope.overlap_count,
+            scope_unexpected_files=scope.unexpected_count,
+            scope_missing_files=scope.missing_count,
             notes=notes,
         )
 
     file_units: list[_ApiDiffUnit] = []
     capped_files = 0
-    for path in kept:
-        block = file_blocks[path]
+    for path in scope.kept_paths:
+        block = scope.file_blocks[path]
         capped_block, was_capped = _cap_file_diff(block, _PER_FILE_CHAR_CAP)
         if was_capped:
             capped_files += 1
@@ -320,7 +306,7 @@ def _build_api_diff_result(
     diff_text, truncated = _truncate_for_model(full_diff_text, token_cap)
     approx_full_tokens = _estimate_tokens(full_diff_text)
     approx_prompt_tokens = _estimate_tokens(diff_text)
-    notes.append(f"Analyzed {len(kept)} file(s) after filtering.")
+    notes = [*scope.notes, f"Analyzed {len(scope.kept_paths)} file(s) after filtering."]
 
     return _ApiDiffResult(
         from_ref=from_ref,
@@ -328,17 +314,66 @@ def _build_api_diff_result(
         diff_text=diff_text,
         full_diff_text=full_diff_text,
         truncated=truncated,
-        analyzed_files=kept,
+        analyzed_files=scope.kept_paths,
         file_units=file_units,
-        changed_files_total=len(changed_paths),
-        ignored_files_total=ignored_count,
+        changed_files_total=len(scope.changed_paths),
+        ignored_files_total=scope.ignored_count,
         approx_prompt_tokens=approx_prompt_tokens,
         approx_full_tokens=approx_full_tokens,
         capped_files=capped_files,
-        scope_allowlist_files_total=len(normalized_allowlist),
-        scope_overlap_files=len(overlap_paths),
-        scope_unexpected_files=len(unexpected_paths),
-        scope_missing_files=scope_missing_files,
+        scope_allowlist_files_total=scope.allowlist_count,
+        scope_overlap_files=scope.overlap_count,
+        scope_unexpected_files=scope.unexpected_count,
+        scope_missing_files=scope.missing_count,
+        notes=notes,
+    )
+
+
+def _build_api_diff_scope(
+    *,
+    pr_files: list[Mapping[str, object]],
+    ignore_patterns: list[str],
+    allowed_files: list[str] | None,
+) -> _ApiDiffScope:
+    notes = ["Using GitHub API PR files fallback because local git refs are unavailable."]
+    normalized_allowlist = {
+        _normalize_repo_path(path) for path in (allowed_files or []) if _normalize_repo_path(path)
+    }
+    changed_paths: list[str] = []
+    file_blocks: dict[str, str] = {}
+    for item in pr_files:
+        path, block = _build_git_block_from_pr_file(item)
+        changed_paths.append(path)
+        file_blocks[path] = block
+
+    overlap_paths = {path for path in changed_paths if path in normalized_allowlist}
+    unexpected_paths = [
+        path for path in changed_paths if normalized_allowlist and path not in normalized_allowlist
+    ]
+    missing_count = (
+        max(0, len(normalized_allowlist) - len(overlap_paths)) if normalized_allowlist else 0
+    )
+    scoped_changed = (
+        [path for path in changed_paths if path in normalized_allowlist]
+        if normalized_allowlist
+        else list(changed_paths)
+    )
+    if normalized_allowlist:
+        notes.append(
+            "Scope guard: "
+            f"matched {len(scoped_changed)}/{len(changed_paths)} api-changed file(s) against PR allowlist "
+            f"(unexpected={len(unexpected_paths)}, missing={missing_count})."
+        )
+    kept_paths = [path for path in scoped_changed if not _is_ignored_path(path, ignore_patterns)]
+    return _ApiDiffScope(
+        changed_paths=changed_paths,
+        file_blocks=file_blocks,
+        kept_paths=kept_paths,
+        ignored_count=max(0, len(scoped_changed) - len(kept_paths)),
+        allowlist_count=len(normalized_allowlist),
+        overlap_count=len(overlap_paths),
+        unexpected_count=len(unexpected_paths),
+        missing_count=missing_count,
         notes=notes,
     )
 
@@ -476,7 +511,7 @@ class PipelineRecommendationRunner:
         self._mode = mode or os.getenv("BUMPKIN_PROVIDER", "auto")
         self._model = model or os.getenv("BUMPKIN_MODEL", "")
         self._fallback_model = fallback_model or os.getenv("BUMPKIN_FALLBACK_MODEL", "")
-        self._models_endpoint = models_endpoint or os.getenv("BUMPKIN_MODELS_ENDPOINT", "")
+        self._models_endpoint = models_endpoint or resolve_models_endpoint()
         self._max_retries = max_retries if max_retries is not None else 3
         self._request_timeout = (
             request_timeout
@@ -495,10 +530,10 @@ class PipelineRecommendationRunner:
         if not self._model.strip():
             raise ValueError("BUMPKIN_MODEL is required for recommendation runs.")
         if not self._models_endpoint.strip():
-            raise ValueError("BUMPKIN_MODELS_ENDPOINT is required for recommendation runs.")
+            raise ValueError("BUMPKIN_ENDPOINT is required for recommendation runs.")
         if not is_valid_models_endpoint(self._models_endpoint):
             raise ValueError(
-                "BUMPKIN_MODELS_ENDPOINT must be a valid http(s) URL for recommendation runs."
+                "BUMPKIN_ENDPOINT must be a valid http(s) URL for recommendation runs."
             )
         token = (request.provider_token or "").strip()
         fallback_diff_builder: Any | None = None

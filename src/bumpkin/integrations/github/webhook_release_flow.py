@@ -294,46 +294,16 @@ def process_bump_command_release_side_effects(
     mismatch_policy: str,
     resolve_tag_publisher: ResolveTagPublisherFn,
 ) -> None:
-    recommended_label: str | None = None
-    recommended_current_version: str | None = None
-    release_backlog_ids_to_include: tuple[int, ...] = ()
-    release_target_merge_sha: str | None = None
-
-    if event.repository is not None and event.pull_request_number is not None:
-        try:
-            backlog_items = state_store.list_unreleased_release_backlog_items(
-                repository=event.repository,
-            )
-        except Exception:  # noqa: BLE001 - backlog read errors should not fail command handling
-            backlog_items = []
-        if backlog_items:
-            aggregate = aggregate_release_backlog(backlog_items)
-            recommended_label = aggregate.recommended_label or aggregate.aggregated_label
-            recommended_current_version = aggregate.current_version
-            release_backlog_ids_to_include = aggregate.considered_item_ids
-            release_target_merge_sha = aggregate.target_merge_commit_sha
-            response_payload["release_backlog"] = {
-                "status": "loaded",
-                "items": aggregate.item_count,
-                "considered_items": aggregate.considered_item_count,
-                "considered_backlog_ids": list(aggregate.considered_item_ids),
-                "aggregated_label": aggregate.aggregated_label,
-                "recommended_label": aggregate.recommended_label,
-                "baseline_version": aggregate.baseline_version,
-                "current_version": aggregate.current_version,
-                "next_version": aggregate.next_version,
-                "target_merge_commit_sha": aggregate.target_merge_commit_sha,
-            }
-        if recommended_label is None or recommended_current_version is None:
-            recommendation = state_store.latest_recommendation_for_pr(
-                repository=event.repository,
-                pull_request_number=event.pull_request_number,
-            )
-            if recommendation is not None:
-                if recommended_label is None:
-                    recommended_label = recommendation.label
-                if recommended_current_version is None:
-                    recommended_current_version = recommendation.current_version
+    (
+        recommended_label,
+        recommended_current_version,
+        release_backlog_ids_to_include,
+        release_target_merge_sha,
+    ) = _load_release_recommendation(
+        event=event,
+        state_store=state_store,
+        response_payload=response_payload,
+    )
 
     reaction = _build_command_reaction(
         command,
@@ -346,73 +316,155 @@ def process_bump_command_release_side_effects(
     if not bool(reaction.get("applied")):
         return
 
-    next_version = str(reaction.get("next_version", "")).strip()
-    tag_name = f"v{next_version}" if next_version else ""
-    target_sha = (
-        (release_target_merge_sha or "").strip()
-        or (event.merge_commit_sha or "").strip()
-        or (event.head_sha or "").strip()
-        or (event.base_sha or "").strip()
+    _publish_bump_tag(
+        event=event,
+        response_payload=response_payload,
+        state_store=state_store,
+        resolve_tag_publisher=resolve_tag_publisher,
+        next_version=str(reaction.get("next_version", "")).strip(),
+        target_sha=release_target_merge_sha,
+        backlog_ids=release_backlog_ids_to_include,
     )
-    if not tag_name:
-        response_payload["tag_delivery"] = {
-            "status": "skipped",
-            "reason": "missing_next_version",
-        }
-    elif not target_sha:
-        response_payload["tag_delivery"] = {
-            "status": "skipped",
-            "reason": "missing_target_sha",
-        }
-    else:
-        tag_request = TagPublishRequest(
-            repository=event.repository or "",
-            tag_name=tag_name,
-            target_sha=target_sha,
-            installation_id=event.installation_id,
-        )
-        try:
-            tag_result = resolve_tag_publisher(event).publish(tag_request)
-        except Exception as err:  # noqa: BLE001 - tag publish failures should not fail webhook intake
-            response_payload["tag_delivery"] = {
-                "status": "failed",
-                "reason": "publisher_error",
-                "message": str(err).strip() or "tag publish failed",
-            }
-        else:
-            response_payload["tag_delivery"] = {
-                "status": tag_result.status,
-                "tag_name": tag_result.tag_name,
-                "target_sha": target_sha,
-            }
-            if tag_result.url:
-                response_payload["tag_delivery"]["url"] = tag_result.url
-            if tag_result.message:
-                response_payload["tag_delivery"]["message"] = tag_result.message
-            if tag_result.status in {"created", "exists"} and release_backlog_ids_to_include:
-                try:
-                    included_count = state_store.mark_release_backlog_items_included(
-                        repository=event.repository or "",
-                        backlog_ids=release_backlog_ids_to_include,
-                        release_tag=tag_name,
-                    )
-                except Exception as err:  # noqa: BLE001 - inclusion failures should not fail webhook intake
-                    response_payload["release_backlog_update"] = {
-                        "status": "failed",
-                        "reason": "store_error",
-                        "message": str(err).strip() or "release backlog inclusion update failed",
-                    }
-                else:
-                    response_payload["release_backlog_update"] = {
-                        "status": "marked_included",
-                        "release_tag": tag_name,
-                        "updated_count": included_count,
-                    }
 
     response_payload["reaction"] = _mark_bump_not_applied_when_tag_failed(
         reaction=reaction,
         tag_delivery=response_payload.get("tag_delivery"),
     )
+
+
+def _load_release_recommendation(
+    *,
+    event: AppEvent,
+    state_store: RecommendationReleaseBacklogStore,
+    response_payload: dict[str, Any],
+) -> tuple[str | None, str | None, tuple[int, ...], str | None]:
+    recommended_label: str | None = None
+    recommended_current_version: str | None = None
+    backlog_ids: tuple[int, ...] = ()
+    target_merge_sha: str | None = None
+    if event.repository is None or event.pull_request_number is None:
+        return recommended_label, recommended_current_version, backlog_ids, target_merge_sha
+    try:
+        backlog_items = state_store.list_unreleased_release_backlog_items(
+            repository=event.repository
+        )
+    except Exception:  # noqa: BLE001 - backlog read errors should not fail command handling
+        backlog_items = []
+    if backlog_items:
+        aggregate = aggregate_release_backlog(backlog_items)
+        recommended_label = aggregate.recommended_label or aggregate.aggregated_label
+        recommended_current_version = aggregate.current_version
+        backlog_ids = aggregate.considered_item_ids
+        target_merge_sha = aggregate.target_merge_commit_sha
+        response_payload["release_backlog"] = {
+            "status": "loaded",
+            "items": aggregate.item_count,
+            "considered_items": aggregate.considered_item_count,
+            "considered_backlog_ids": list(aggregate.considered_item_ids),
+            "aggregated_label": aggregate.aggregated_label,
+            "recommended_label": aggregate.recommended_label,
+            "baseline_version": aggregate.baseline_version,
+            "current_version": aggregate.current_version,
+            "next_version": aggregate.next_version,
+            "target_merge_commit_sha": aggregate.target_merge_commit_sha,
+        }
+    if recommended_label is None or recommended_current_version is None:
+        recommendation = state_store.latest_recommendation_for_pr(
+            repository=event.repository,
+            pull_request_number=event.pull_request_number,
+        )
+        if recommendation is not None:
+            recommended_label = recommended_label or recommendation.label
+            recommended_current_version = (
+                recommended_current_version or recommendation.current_version
+            )
+    return recommended_label, recommended_current_version, backlog_ids, target_merge_sha
+
+
+def _publish_bump_tag(
+    *,
+    event: AppEvent,
+    response_payload: dict[str, Any],
+    state_store: RecommendationReleaseBacklogStore,
+    resolve_tag_publisher: ResolveTagPublisherFn,
+    next_version: str,
+    target_sha: str | None,
+    backlog_ids: tuple[int, ...],
+) -> None:
+    tag_name = f"v{next_version}" if next_version else ""
+    resolved_target_sha = (
+        (target_sha or "").strip()
+        or (event.merge_commit_sha or "").strip()
+        or (event.head_sha or "").strip()
+        or (event.base_sha or "").strip()
+    )
+    if not tag_name:
+        response_payload["tag_delivery"] = {"status": "skipped", "reason": "missing_next_version"}
+        return
+    if not resolved_target_sha:
+        response_payload["tag_delivery"] = {"status": "skipped", "reason": "missing_target_sha"}
+        return
+    tag_request = TagPublishRequest(
+        repository=event.repository or "",
+        tag_name=tag_name,
+        target_sha=resolved_target_sha,
+        installation_id=event.installation_id,
+    )
+    try:
+        tag_result = resolve_tag_publisher(event).publish(tag_request)
+    except Exception as err:  # noqa: BLE001 - tag publish failures should not fail webhook intake
+        response_payload["tag_delivery"] = {
+            "status": "failed",
+            "reason": "publisher_error",
+            "message": str(err).strip() or "tag publish failed",
+        }
+        return
+    tag_delivery: dict[str, object] = {
+        "status": tag_result.status,
+        "tag_name": tag_result.tag_name,
+        "target_sha": resolved_target_sha,
+    }
+    if tag_result.url:
+        tag_delivery["url"] = tag_result.url
+    if tag_result.message:
+        tag_delivery["message"] = tag_result.message
+    response_payload["tag_delivery"] = tag_delivery
+    if tag_result.status in {"created", "exists"} and backlog_ids:
+        _mark_release_backlog(
+            event=event,
+            state_store=state_store,
+            response_payload=response_payload,
+            backlog_ids=backlog_ids,
+            tag_name=tag_name,
+        )
+
+
+def _mark_release_backlog(
+    *,
+    event: AppEvent,
+    state_store: RecommendationReleaseBacklogStore,
+    response_payload: dict[str, Any],
+    backlog_ids: tuple[int, ...],
+    tag_name: str,
+) -> None:
+    try:
+        included_count = state_store.mark_release_backlog_items_included(
+            repository=event.repository or "",
+            backlog_ids=backlog_ids,
+            release_tag=tag_name,
+        )
+    except Exception as err:  # noqa: BLE001 - inclusion failures should not fail webhook intake
+        response_payload["release_backlog_update"] = {
+            "status": "failed",
+            "reason": "store_error",
+            "message": str(err).strip() or "release backlog inclusion update failed",
+        }
+    else:
+        response_payload["release_backlog_update"] = {
+            "status": "marked_included",
+            "release_tag": tag_name,
+            "updated_count": included_count,
+        }
 
 
 def build_release_command_reaction(response_payload: Mapping[str, object]) -> dict[str, Any]:

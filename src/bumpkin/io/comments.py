@@ -3,15 +3,19 @@ from __future__ import annotations
 import re
 from typing import Any, cast
 
-from bumpkin.io.github_http import github_request_json
-
-COMMENT_MARKER = "<!-- bumpkin:recommendation -->"
-BUMPKIN_TITLES = (
-    "🤖 Bumpkin Recommendation",
-    "🤖 Bumpkin (stub mode)",
-    "🤖 Bumpkin (semantic fallback)",
-    "🤖 Bumpkin Manual Review Required",
+from bumpkin.io.comment_posting import (
+    BUMPKIN_TITLES as _BUMPKIN_TITLES,
 )
+from bumpkin.io.comment_posting import (
+    COMMENT_MARKER,
+)
+from bumpkin.io.comment_posting import (
+    find_existing_bumpkin_comment_id as _find_existing_bumpkin_comment_id_impl,
+)
+from bumpkin.io.comment_posting import (
+    post_pr_comment as _post_pr_comment,
+)
+
 PATH_ONLY_EXPLAINABILITY_RULES = {"changed_file_path", "behavior_contract_path_signal"}
 INTERNAL_TARGET_MEANING_MAP = {
     "snippet normalization": "text comparison hardening",
@@ -119,6 +123,72 @@ def format_recommendation_comment(
     proof_obligations: dict[str, Any] | None = None,
     contradictions: list[dict[str, Any]] | None = None,
 ) -> str:
+    metadata = _build_recommendation_comment_metadata(
+        result=result,
+        mode=mode,
+        fallback_reason=fallback_reason,
+        current_tag=current_tag,
+        next_tag=next_tag,
+        override_summary=override_summary,
+        explainability_rows=explainability_rows,
+        aggregation_trace=aggregation_trace,
+        boundary_summary=boundary_summary,
+        decision_trace=decision_trace,
+        analysis_state=analysis_state,
+        classification_source=classification_source,
+        failure_category=failure_category,
+        policy_effects=policy_effects,
+        override_status=override_status,
+        advisory_status=advisory_status,
+        advisory_label=advisory_label,
+        advisory_confidence=advisory_confidence,
+        advisory_summary=advisory_summary,
+        disagreement_reason=disagreement_reason,
+        advisory_fallback_reason=advisory_fallback_reason,
+    )
+    blocks = _build_recommendation_comment_blocks(
+        status=str(result.get("status", "classified")),
+        label=result.get("label"),
+        confidence=result.get("confidence", "n/a"),
+        classification_source=classification_source,
+        advisory_status=advisory_status,
+        notes=notes,
+        findings=findings,
+        explainability_rows=explainability_rows,
+        advisory_accepted_evidence_ids=advisory_accepted_evidence_ids,
+        advisory_rejected_evidence_ids=advisory_rejected_evidence_ids,
+        advisory_label=advisory_label,
+        advisory_confidence=advisory_confidence,
+        proof_obligations=proof_obligations,
+        contradictions=contradictions,
+    )
+    return _render_recommendation_comment(result=result, metadata=metadata, blocks=blocks)
+
+
+def _build_recommendation_comment_metadata(
+    *,
+    result: dict[str, Any],
+    mode: str,
+    fallback_reason: str | None,
+    current_tag: str | None,
+    next_tag: str | None,
+    override_summary: str | None,
+    explainability_rows: list[dict[str, Any]] | None,
+    aggregation_trace: str | None,
+    boundary_summary: dict[str, int] | None,
+    decision_trace: dict[str, Any] | None,
+    analysis_state: str | None,
+    classification_source: str | None,
+    failure_category: str | None,
+    policy_effects: list[str] | None,
+    override_status: str | None,
+    advisory_status: str | None,
+    advisory_label: str | None,
+    advisory_confidence: str | None,
+    advisory_summary: str | None,
+    disagreement_reason: str | None,
+    advisory_fallback_reason: str | None,
+) -> dict[str, Any]:
     status = str(result.get("status", "classified"))
     label = result.get("label")
     normalized_label = str(label).upper()
@@ -133,15 +203,7 @@ def format_recommendation_comment(
         title = "🤖 Bumpkin (semantic fallback)"
     else:
         title = "🤖 Bumpkin Recommendation"
-    findings_list = findings or []
     delta_rows = explainability_rows or []
-    findings_block = _format_findings_block(
-        findings_list,
-        explainability_rows=delta_rows,
-        status=status,
-        classification_source=classification_source,
-        advisory_status=advisory_status,
-    )
     policy_block = _format_policy_effects_block(policy_effects or [])
     warning_block = ""
     if status == "manual_review":
@@ -180,11 +242,47 @@ def format_recommendation_comment(
         explainability_rows=delta_rows,
     )
     reasoning_line = _format_reasoning_line(status=status, label=normalized_label)
-    note_block = _format_notes_block(
-        notes,
+    return {
+        "status": status,
+        "title": title,
+        "emoji": emoji,
+        "label": label,
+        "warning_block": warning_block,
+        "version_block": version_block,
+        "override_line": override_line,
+        "aggregation_block": aggregation_block,
+        "boundary_block": boundary_block,
+        "decision_block": decision_block,
+        "analysis_block": analysis_block,
+        "fallback_block": fallback_block,
+        "policy_block": policy_block,
+        "classified_summary": classified_summary,
+        "reasoning_line": reasoning_line,
+    }
+
+
+def _build_recommendation_comment_blocks(
+    *,
+    status: str,
+    label: Any,
+    confidence: Any,
+    classification_source: str | None,
+    advisory_status: str | None,
+    notes: list[str],
+    findings: list[dict[str, Any]] | None,
+    explainability_rows: list[dict[str, Any]] | None,
+    advisory_accepted_evidence_ids: list[str] | None,
+    advisory_rejected_evidence_ids: list[str] | None,
+    advisory_label: str | None,
+    advisory_confidence: str | None,
+    proof_obligations: dict[str, Any] | None,
+    contradictions: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    findings_list = findings or []
+    findings_block = _format_findings_block(
+        findings_list,
+        explainability_rows=explainability_rows or [],
         status=status,
-        label=label,
-        confidence=result.get("confidence", "n/a"),
         classification_source=classification_source,
         advisory_status=advisory_status,
     )
@@ -192,9 +290,9 @@ def format_recommendation_comment(
         status=advisory_status,
         label=advisory_label,
         confidence=advisory_confidence,
-        summary=advisory_summary,
-        disagreement_reason=disagreement_reason,
-        fallback_reason=advisory_fallback_reason,
+        summary=None,
+        disagreement_reason=None,
+        fallback_reason=None,
         accepted_evidence_ids=advisory_accepted_evidence_ids,
         rejected_evidence_ids=advisory_rejected_evidence_ids,
     )
@@ -204,35 +302,144 @@ def format_recommendation_comment(
     )
     missing_proof_block = _format_missing_proof_obligations_block(proof_obligations or {})
     contradiction_block = _format_contradictions_block(contradictions or [])
-    if status == "manual_review":
-        details_block = _format_collapsed_details_block(
-            analysis_block=analysis_block,
-            fallback_block="",
-            advisory_block=advisory_block,
-            aggregation_block=aggregation_block,
-            boundary_block=boundary_block,
-            policy_block=policy_block,
-            decision_block=decision_block,
-            contradiction_block=contradiction_block,
-            override_line=override_line,
-            version_block="",
-            note_block=note_block,
-        )
-        return (
-            f"{COMMENT_MARKER}\n"
-            f"{title}\n\n"
-            f"{warning_block}"
-            f"{proposed_bump_line}"
-            "Final decision: manual review required.\n\n"
-            f"{missing_proof_block}"
-            f"Summary        : {classified_summary}\n\n"
-            f"Reasoning      : {reasoning_line}\n\n"
-            "Findings:\n"
-            f"{findings_block}\n\n"
-            f"{version_block}\n"
-            f"{details_block}"
+    note_block = _format_notes_block(
+        notes,
+        status=status,
+        label=label,
+        confidence=confidence,
+        classification_source=classification_source,
+        advisory_status=advisory_status,
+    )
+    return {
+        "findings_block": findings_block,
+        "advisory_block": advisory_block,
+        "proposed_bump_line": proposed_bump_line,
+        "missing_proof_block": missing_proof_block,
+        "contradiction_block": contradiction_block,
+        "note_block": note_block,
+    }
+
+
+def _render_recommendation_comment(
+    *,
+    result: dict[str, Any],
+    metadata: dict[str, Any],
+    blocks: dict[str, Any],
+) -> str:
+    context = {**metadata, **blocks}
+    if context["status"] == "manual_review":
+        return _format_manual_review_comment(
+            title=context["title"],
+            warning_block=context["warning_block"],
+            proposed_bump_line=context["proposed_bump_line"],
+            missing_proof_block=context["missing_proof_block"],
+            classified_summary=context["classified_summary"],
+            reasoning_line=context["reasoning_line"],
+            findings_block=context["findings_block"],
+            version_block=context["version_block"],
+            analysis_block=context["analysis_block"],
+            advisory_block=context["advisory_block"],
+            aggregation_block=context["aggregation_block"],
+            boundary_block=context["boundary_block"],
+            policy_block=context["policy_block"],
+            decision_block=context["decision_block"],
+            contradiction_block=context["contradiction_block"],
+            override_line=context["override_line"],
+            note_block=context["note_block"],
         )
 
+    return _format_classified_comment(
+        title=context["title"],
+        emoji=context["emoji"],
+        label=context["label"],
+        result=result,
+        classified_summary=context["classified_summary"],
+        reasoning_line=context["reasoning_line"],
+        findings_block=context["findings_block"],
+        version_block=context["version_block"],
+        analysis_block=context["analysis_block"],
+        fallback_block=context["fallback_block"],
+        advisory_block=context["advisory_block"],
+        aggregation_block=context["aggregation_block"],
+        boundary_block=context["boundary_block"],
+        policy_block=context["policy_block"],
+        decision_block=context["decision_block"],
+        contradiction_block=context["contradiction_block"],
+        override_line=context["override_line"],
+        note_block=context["note_block"],
+    )
+
+
+def _format_manual_review_comment(
+    *,
+    title: str,
+    warning_block: str,
+    proposed_bump_line: str,
+    missing_proof_block: str,
+    classified_summary: str,
+    reasoning_line: str,
+    findings_block: str,
+    version_block: str,
+    analysis_block: str,
+    advisory_block: str,
+    aggregation_block: str,
+    boundary_block: str,
+    policy_block: str,
+    decision_block: str,
+    contradiction_block: str,
+    override_line: str,
+    note_block: str,
+) -> str:
+    details_block = _format_collapsed_details_block(
+        analysis_block=analysis_block,
+        fallback_block="",
+        advisory_block=advisory_block,
+        aggregation_block=aggregation_block,
+        boundary_block=boundary_block,
+        policy_block=policy_block,
+        decision_block=decision_block,
+        contradiction_block=contradiction_block,
+        override_line=override_line,
+        version_block="",
+        note_block=note_block,
+    )
+    return (
+        f"{COMMENT_MARKER}\n"
+        f"{title}\n\n"
+        f"{warning_block}"
+        f"{proposed_bump_line}"
+        "Final decision: manual review required.\n\n"
+        f"{missing_proof_block}"
+        f"Summary        : {classified_summary}\n\n"
+        f"Reasoning      : {reasoning_line}\n\n"
+        "Findings:\n"
+        f"{findings_block}\n\n"
+        f"{version_block}\n"
+        f"{details_block}"
+    )
+
+
+def _format_classified_comment(
+    *,
+    title: str,
+    emoji: str,
+    label: Any,
+    result: dict[str, Any],
+    classified_summary: str,
+    reasoning_line: str,
+    findings_block: str,
+    version_block: str,
+    analysis_block: str,
+    fallback_block: str,
+    advisory_block: str,
+    aggregation_block: str,
+    boundary_block: str,
+    policy_block: str,
+    decision_block: str,
+    contradiction_block: str,
+    override_line: str,
+    note_block: str,
+) -> str:
     details_block = _format_collapsed_details_block(
         analysis_block=analysis_block,
         fallback_block=fallback_block,
@@ -717,52 +924,6 @@ def _shorten(value: str, *, limit: int) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
-def _is_bumpkin_comment_body(body: str) -> bool:
-    normalized = body.strip()
-    return COMMENT_MARKER in normalized or normalized.startswith(BUMPKIN_TITLES)
-
-
-def _find_existing_bumpkin_comment_id(comments: list[dict[str, Any]]) -> int | None:
-    for comment in reversed(comments):
-        body = str(comment.get("body", ""))
-        if not _is_bumpkin_comment_body(body):
-            continue
-        comment_id = comment.get("id")
-        if isinstance(comment_id, int):
-            return comment_id
-    return None
-
-
-def _api_request(token: str, url: str, method: str, payload: dict[str, Any] | None = None) -> Any:
-    response, _headers = github_request_json(
-        url=url,
-        method=method,
-        timeout_seconds=10,
-        token=token,
-        user_agent="bumpkin",
-        payload=payload,
-    )
-    return response
-
-
-def post_pr_comment(token: str, repo: str, pr_number: int, body: str) -> None:
-    if not token:
-        raise RuntimeError("GITHUB_TOKEN is required to post PR comments.")
-    if not repo:
-        raise RuntimeError("GITHUB_REPOSITORY is required to post PR comments.")
-
-    comments_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments?per_page=100"
-    comments_raw = _api_request(token, comments_url, "GET")
-    comments = _as_object_list(comments_raw)
-    if comments is None:
-        raise RuntimeError("Unexpected comments response shape from GitHub API.")
-    typed_comments = [item for item in (_as_dict(entry) for entry in comments) if item is not None]
-
-    existing_id = _find_existing_bumpkin_comment_id(typed_comments)
-    if existing_id is not None:
-        update_url = f"https://api.github.com/repos/{repo}/issues/comments/{existing_id}"
-        _api_request(token, update_url, "PATCH", {"body": body})
-        return
-
-    create_url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-    _api_request(token, create_url, "POST", {"body": body})
+_find_existing_bumpkin_comment_id = _find_existing_bumpkin_comment_id_impl
+BUMPKIN_TITLES = _BUMPKIN_TITLES
+post_pr_comment = _post_pr_comment

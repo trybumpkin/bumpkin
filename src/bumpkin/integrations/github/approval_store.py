@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
-from hashlib import sha256
-
 from bumpkin.integrations.github.guards import ApprovalRecord
+from bumpkin.integrations.github.persistence_hashing import compute_recommendation_hash
 from bumpkin.integrations.github.persistence_protocols import ApprovalPersistenceStore
 
 __all__ = [
@@ -59,8 +56,3 @@ class SqliteApprovalStore:
             repository=repository,
             pull_request_number=pull_request_number,
         )
-
-
-def compute_recommendation_hash(payload: Mapping[str, object]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return sha256(canonical.encode("utf-8")).hexdigest()

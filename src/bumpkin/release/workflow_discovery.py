@@ -9,7 +9,8 @@ from typing import cast
 
 from bumpkin.release.candidate import _coerce_int, _deserialize_release_candidate
 from bumpkin.release.models import ReleaseCandidate
-from bumpkin.release.repository_client import _bytes_request, _json_request
+from bumpkin.release.repository_client_http import bytes_request as _bytes_request
+from bumpkin.release.repository_client_http import json_request as _json_request
 
 
 def _workflow_file_path() -> str | None:
@@ -24,14 +25,17 @@ def _workflow_file_path() -> str | None:
     return workflow_path[marker_index + 1 :].strip() or None
 
 
+def _current_env_value(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    return value or None
+
+
 def _current_branch_name() -> str | None:
-    branch_name = os.getenv("GITHUB_REF_NAME", "").strip()
-    return branch_name or None
+    return _current_env_value("GITHUB_REF_NAME")
 
 
 def _current_run_id() -> str | None:
-    run_id = os.getenv("GITHUB_RUN_ID", "").strip()
-    return run_id or None
+    return _current_env_value("GITHUB_RUN_ID")
 
 
 def _list_workflow_runs(

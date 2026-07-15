@@ -130,7 +130,7 @@ def reaction_emoji_for_request(request: ReactionPublishRequest) -> str | None:
     return None
 
 
-class GitHubIssueCommentPublisher:
+class _GitHubReactionPublisher:
     def __init__(
         self,
         *,
@@ -144,22 +144,7 @@ class GitHubIssueCommentPublisher:
         self._timeout_seconds = timeout_seconds
         self._http_client = http_client
 
-    def publish(self, request: ReactionPublishRequest) -> str | None:
-        if not self._token:
-            return None
-        url = (
-            f"https://api.github.com/repos/{request.repository}/issues/"
-            f"{request.issue_number}/comments"
-        )
-        payload = {"body": format_reaction_comment(request)}
-        response = self._api_request(url=url, method="POST", payload=payload)
-        response_obj = _as_dict(response)
-        if response_obj is None:
-            return None
-        html_url = response_obj.get("html_url")
-        return str(html_url).strip() if html_url is not None else None
-
-    def _api_request(
+    def _request_json(
         self,
         *,
         url: str,
@@ -177,7 +162,24 @@ class GitHubIssueCommentPublisher:
         return response
 
 
-class GitHubIssueCommentReactionPublisher:
+class GitHubIssueCommentPublisher(_GitHubReactionPublisher):
+    def publish(self, request: ReactionPublishRequest) -> str | None:
+        if not self._token:
+            return None
+        url = (
+            f"https://api.github.com/repos/{request.repository}/issues/"
+            f"{request.issue_number}/comments"
+        )
+        payload = {"body": format_reaction_comment(request)}
+        response = self._request_json(url=url, method="POST", payload=payload)
+        response_obj = _as_dict(response)
+        if response_obj is None:
+            return None
+        html_url = response_obj.get("html_url")
+        return str(html_url).strip() if html_url is not None else None
+
+
+class GitHubIssueCommentReactionPublisher(_GitHubReactionPublisher):
     def __init__(
         self,
         *,
@@ -186,10 +188,12 @@ class GitHubIssueCommentReactionPublisher:
         timeout_seconds: int = 10,
         http_client: GitHubHttpClient = DEFAULT_GITHUB_HTTP_CLIENT,
     ) -> None:
-        self._token = token.strip()
-        self._user_agent = user_agent.strip() or "bumpkin-app"
-        self._timeout_seconds = timeout_seconds
-        self._http_client = http_client
+        super().__init__(
+            token=token,
+            user_agent=user_agent,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+        )
 
     def publish(self, request: ReactionPublishRequest) -> str | None:
         if not self._token:
