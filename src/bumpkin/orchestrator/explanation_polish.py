@@ -8,12 +8,8 @@ import urllib.request
 from typing import Any, cast
 
 from bumpkin.orchestrator import court as orchestrator_court
-from bumpkin.retry import (
-    apply_model_call_interval,
-    compute_retry_delay,
-    is_retryable_http_code,
-    register_rate_limit_cooldown,
-)
+from bumpkin.request_pacing import apply_model_call_interval, register_rate_limit_cooldown
+from bumpkin.retry import compute_retry_delay, is_retryable_http_code
 
 MACHINE_EXPLANATION_PATTERN = re.compile(
     r"\b(?:path_marker|behavior_marker|contract_signal):\d+\b|"
