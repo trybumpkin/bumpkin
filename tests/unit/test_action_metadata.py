@@ -70,7 +70,7 @@ def test_source_repo_release_workflow_uses_local_action() -> None:
     assert bumpkin_step["with"]["preview_run_id"] == "${{ inputs.preview_run_id }}"
     assert bumpkin_step["with"]["model"] == "${{ secrets.BUMPKIN_MODEL }}"
     assert bumpkin_step["with"]["endpoint"] == "${{ secrets.BUMPKIN_ENDPOINT }}"
-    assert bumpkin_step["with"]["api_key"] == "${{ secrets.BUMPKIN_API_KEY }}"  # noqa: S105
+    assert bumpkin_step["with"]["api_key"] == "${{ secrets.BUMPKIN_API_KEY }}"
     assert "provider" not in bumpkin_step["with"]
     assert any(step.get("name") == "Upload release candidate artifact" for step in steps)
     assert not any(step.get("name") == "Validate preview output" for step in steps)
