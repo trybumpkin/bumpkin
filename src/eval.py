@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -17,8 +16,9 @@ from bumpkin.planner import plan_analysis_route
 from bumpkin.policies import engine as policy_engine
 from config import BumpkinConfig, load_bumpkin_config
 from diff import DiffResult, DiffUnit
+from eval_cli_args import parse_args as _parse_cli_args
 from llm import get_recommendation
-from prompt_pack import DEFAULT_LANGUAGE_GROUP, get_prompt_metadata
+from prompt_pack import DEFAULT_LANGUAGE_GROUP
 from token_env import resolve_models_endpoint, resolve_models_token
 
 DEFAULT_PROMPT_GATE_BASELINE = Path("test-diffs/baselines/js-ts-v1.json")
@@ -32,6 +32,28 @@ PROMPT_GATE_BASELINES = {
 STRICT_MAX_MANUAL_REVIEW_RATE = 0.20
 STRICT_MAX_CRITICAL_MISSING_PROOFS = 0
 STRICT_MAX_CONTRADICTIONS = 0
+
+__all__ = [
+    "FixtureCase",
+    "FixtureResult",
+    "build_case_inputs",
+    "build_observed_summary",
+    "categorize_failure_reason",
+    "compare_against_prompt_gate",
+    "compute_eval_metrics",
+    "evaluate_fixture_cases",
+    "get_default_prompt_gate_baseline",
+    "load_bumpkin_config",
+    "load_fixture_cases",
+    "load_prompt_gate_baseline",
+    "orchestrator_core",
+    "plan_analysis_route",
+    "policy_engine",
+    "resolve_models_endpoint",
+    "resolve_models_token",
+    "run_eval_preflight",
+    "select_batch_cases",
+]
 
 
 def get_default_prompt_gate_baseline(language_group: str) -> Path:
@@ -312,108 +334,7 @@ def _run_eval(
 
 
 def _parse_args() -> argparse.Namespace:
-    try:
-        default_case_delay_ms = int(os.getenv("BUMPKIN_EVAL_CASE_DELAY_MS", "0"))
-    except ValueError:
-        default_case_delay_ms = 0
-
-    parser = argparse.ArgumentParser(description="Run Bumpkin fixture evals.")
-    parser.add_argument("--fixtures-dir", default="test-diffs", help="Fixtures root directory")
-    parser.add_argument(
-        "--aggregate-json-dir",
-        default="",
-        help="Aggregate eval JSON outputs from this directory instead of running model calls.",
-    )
-    parser.add_argument(
-        "--language-group",
-        default=DEFAULT_LANGUAGE_GROUP,
-        help="Only evaluate fixtures matching this language group.",
-    )
-    parser.add_argument(
-        "--prompt-version",
-        default="",
-        help="Override prompt version selection.",
-    )
-    parser.add_argument(
-        "--prompt-gate-baseline",
-        default="",
-        help="JSON file describing required prompt gate metrics.",
-    )
-    parser.add_argument(
-        "--mode",
-        default=os.getenv("BUMPKIN_PROVIDER", "auto"),
-        help="Provider mode: auto | stub | github-models | openrouter",
-    )
-    parser.add_argument(
-        "--include-tuning-targets",
-        action="store_true",
-        help="Include fixtures marked with context tuning_target=true.",
-    )
-    parser.add_argument(
-        "--model",
-        default=os.getenv("BUMPKIN_MODEL", ""),
-        help="Model identifier for the configured provider.",
-    )
-    parser.add_argument(
-        "--endpoint",
-        default=resolve_models_endpoint(),
-        help="Chat completions endpoint for the configured model provider.",
-    )
-    parser.add_argument("--max-retries", type=int, default=3, help="Model API max retries")
-    parser.add_argument(
-        "--request-timeout",
-        type=int,
-        default=int(os.getenv("BUMPKIN_REQUEST_TIMEOUT", "45")),
-        help="Per-request model API timeout in seconds",
-    )
-    parser.add_argument(
-        "--case-delay-ms",
-        type=int,
-        default=default_case_delay_ms,
-        help="Pause between fixture evals in milliseconds.",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=0,
-        help="Optional number of fixtures to evaluate per batch.",
-    )
-    parser.add_argument(
-        "--batch-index",
-        type=int,
-        default=0,
-        help="Zero-based batch index when --batch-size is provided.",
-    )
-    parser.add_argument(
-        "--output-json",
-        default="",
-        help="Optional path to write machine-readable eval output.",
-    )
-    parser.add_argument(
-        "--preflight-only",
-        action="store_true",
-        help="Run only the model preflight check and skip fixture execution.",
-    )
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Exit non-zero when the selected quality gate fails.",
-    )
-    parser.add_argument(
-        "--continue-on-preflight-failure",
-        action="store_true",
-        help=(
-            "Continue fixture evaluation even when model preflight fails. "
-            "Useful for deterministic/degraded smoke validation."
-        ),
-    )
-    parser.add_argument(
-        "--min-pass-rate",
-        type=float,
-        default=0.8,
-        help="Minimum passing ratio when --strict is used without a prompt gate baseline.",
-    )
-    return parser.parse_args()
+    return _parse_cli_args()
 
 
 def _filter_cases(
@@ -440,413 +361,9 @@ def _write_output_json(path: str, payload: dict[str, Any]) -> None:
 
 def main() -> int:
     args = _parse_args()
-    if not str(args.model or "").strip():
-        raise ValueError("BUMPKIN_MODEL or --model is required.")
-    if not str(args.endpoint or "").strip():
-        raise ValueError("BUMPKIN_MODELS_ENDPOINT or --endpoint is required.")
-    fixtures_dir = Path(args.fixtures_dir)
-    if not fixtures_dir.exists():
-        raise FileNotFoundError(f"Fixtures directory not found: {fixtures_dir}")
+    from eval_pipeline import run
 
-    prompt_metadata = get_prompt_metadata(
-        language_group=args.language_group,
-        prompt_version=args.prompt_version or None,
-    )
-    all_cases = _filter_cases(
-        load_fixture_cases(fixtures_dir),
-        language_group=args.language_group,
-        include_tuning_targets=args.include_tuning_targets,
-    )
-    if not all_cases:
-        failure_code = "no_fixtures_for_language_group"
-        failure_message = (
-            f"No fixture cases found in {fixtures_dir} for language_group={args.language_group}"
-        )
-        print(failure_message)
-        payload = {
-            "prompt_version": prompt_metadata.prompt_version,
-            "language_group": prompt_metadata.language_group,
-            "promotion_status": prompt_metadata.promotion_status,
-            "preflight": {
-                "status": "skipped",
-                "reason": "no fixtures selected for requested language group.",
-                "failure_category": None,
-                "failure_reason": None,
-                "mode_used": "n/a",
-                "model_used": None,
-            },
-            "results": [],
-            "metrics": {
-                "evaluation_mode": "pipeline_parity",
-                "is_subset_run": False,
-                "evaluated_fixture_count": 0,
-                "total_case_count": 0,
-                "baseline_coverage_complete": False,
-                "missing_fixture_names": [],
-                "unexpected_fixture_names": [],
-                "missing_baseline_categories": [],
-            },
-            "gate": {
-                "failures": [failure_message],
-                "failure_codes": [failure_code],
-                "strict": args.strict,
-            },
-        }
-        _write_output_json(args.output_json, payload)
-        return 1 if args.strict else 0
-
-    if args.aggregate_json_dir:
-        results, coverage = aggregate_results_from_json_dir(
-            Path(args.aggregate_json_dir),
-            expected_cases=all_cases,
-        )
-        passed_count = sum(1 for row in results if row.passed)
-        metrics = compute_eval_metrics(
-            results,
-            prompt_version=prompt_metadata.prompt_version,
-            language_group=prompt_metadata.language_group,
-            promotion_status=prompt_metadata.promotion_status,
-            total_case_count=len(all_cases),
-        )
-        metrics["baseline_coverage_complete"] = coverage["baseline_coverage_complete"]
-        metrics["missing_fixture_names"] = coverage["missing_fixture_names"]
-        metrics["unexpected_fixture_names"] = coverage["unexpected_fixture_names"]
-        metrics["missing_baseline_categories"] = []
-        preflight = {
-            "status": "skipped",
-            "reason": "aggregate mode does not perform model preflight.",
-            "failure_category": None,
-            "failure_reason": None,
-            "mode_used": "aggregate",
-            "model_used": None,
-        }
-        pass_rate = metrics["overall_pass_rate"]
-        avg_latency_ms = 0.0
-        avg_tokens = 0.0
-        mode_used_for_summary = "aggregate"
-    else:
-        token = resolve_models_token(endpoint=args.endpoint)
-        try:
-            bumpkin_config = load_bumpkin_config()
-        except ValueError:
-            bumpkin_config = _fallback_config()
-        base_public_api_hints = policy_engine.dedupe_preserving_order(
-            list(bumpkin_config.surface_area)
-            + list(bumpkin_config.public_api_paths)
-            + list(bumpkin_config.public_api_entrypoints)
-        )
-        preflight = run_eval_preflight(
-            mode=args.mode,
-            language_group=prompt_metadata.language_group,
-            prompt_version=prompt_metadata.prompt_version,
-            model=args.model,
-            endpoint=args.endpoint,
-            token=token,
-            max_retries=args.max_retries,
-            request_timeout=getattr(args, "request_timeout", 45),
-        )
-        if args.preflight_only:
-            payload = {
-                "prompt_version": prompt_metadata.prompt_version,
-                "language_group": prompt_metadata.language_group,
-                "promotion_status": prompt_metadata.promotion_status,
-                "preflight": preflight,
-                "results": [],
-                "metrics": {
-                    "evaluation_mode": "pipeline_parity",
-                    "is_subset_run": False,
-                    "evaluated_fixture_count": 0,
-                    "total_case_count": len(all_cases),
-                },
-                "gate": {
-                    "failures": [],
-                    "failure_codes": [],
-                    "strict": args.strict,
-                },
-            }
-            print(json.dumps(payload["preflight"], indent=2))
-            _write_output_json(args.output_json, payload)
-            return 1 if args.strict and preflight["status"] == "failed" else 0
-
-        continue_on_preflight_failure = bool(getattr(args, "continue_on_preflight_failure", False))
-        if preflight["status"] == "failed" and not continue_on_preflight_failure:
-            print(
-                "Preflight failed: "
-                f"category={preflight['failure_category']} "
-                f"reason={preflight['failure_reason']}"
-            )
-            print(json.dumps(preflight, indent=2))
-            payload = {
-                "prompt_version": prompt_metadata.prompt_version,
-                "language_group": prompt_metadata.language_group,
-                "promotion_status": prompt_metadata.promotion_status,
-                "preflight": preflight,
-                "results": [],
-                "metrics": {
-                    "evaluation_mode": "pipeline_parity",
-                    "is_subset_run": False,
-                    "evaluated_fixture_count": 0,
-                    "total_case_count": len(all_cases),
-                },
-                "gate": {
-                    "failures": [],
-                    "failure_codes": [],
-                    "strict": args.strict,
-                },
-            }
-            _write_output_json(args.output_json, payload)
-            return 1 if args.strict else 0
-        if preflight["status"] == "failed" and continue_on_preflight_failure:
-            print(
-                "Preflight failed, continuing fixture evaluation because "
-                "--continue-on-preflight-failure was set."
-            )
-            preflight = dict(preflight)
-            preflight["continued"] = True
-
-        cases, batch_meta = select_batch_cases(
-            all_cases,
-            batch_size=args.batch_size,
-            batch_index=args.batch_index,
-        )
-
-        def recommend(case: FixtureCase) -> dict[str, Any]:
-            diff_result = _build_fixture_diff_result(case)
-            planner_decision = plan_analysis_route(
-                mode=args.mode,
-                endpoint=args.endpoint,
-                has_model_token=bool(token),
-                approx_prompt_tokens=diff_result.approx_prompt_tokens,
-                request_timeout=getattr(args, "request_timeout", 45),
-                chunking_enabled=bumpkin_config.chunking_enabled,
-                chunk_max_tokens=bumpkin_config.chunk_max_tokens,
-                chunk_max_count=bumpkin_config.chunk_max_count,
-            )
-            case_public_hints = policy_engine.dedupe_preserving_order(
-                base_public_api_hints + list(case.surface_area)
-            )
-            core_result = orchestrator_core.analyze_diff_core(
-                diff_result=diff_result,
-                mode=args.mode,
-                model=args.model,
-                fallback_model=None,
-                endpoint=args.endpoint,
-                token=token,
-                max_retries=args.max_retries,
-                request_timeout=getattr(args, "request_timeout", 45),
-                prompt_metadata=prompt_metadata,
-                bumpkin_config=bumpkin_config,
-                planner_decision=planner_decision,
-                notes=[f"Fixture case: {case.name}"],
-                event_labels=[],
-                scope_mismatch_detected=False,
-                scope_mismatch_reason=None,
-                scope_guard={
-                    "required": False,
-                    "source": "fixture",
-                    "fetch_error": None,
-                    "pr_files_count": 0,
-                    "git_files_count": diff_result.changed_files_total,
-                    "overlap_count": 0,
-                    "unexpected_count": 0,
-                    "missing_count": 0,
-                    "mismatch_detected": False,
-                    "mismatch_reason": None,
-                },
-                public_api_hints=case_public_hints,
-            )
-            output = core_result.output
-            result = {
-                "status": output.get("status"),
-                "label": output.get("label"),
-                "confidence": output.get("confidence"),
-                "reasoning": output.get("reasoning"),
-                "changelog": output.get("changelog"),
-                "mode_used": output.get("mode"),
-                "analysis_state": output.get("analysis_state"),
-                "classification_source": output.get("classification_source"),
-                "decision_authority": output.get("decision_authority"),
-                "deterministic_label": output.get("deterministic_label"),
-                "advisory_status": output.get("advisory_status"),
-                "advisory_label": output.get("advisory_label"),
-                "advisory_confidence": output.get("advisory_confidence"),
-                "court_skipped_reason": output.get("court_skipped_reason"),
-                "case_file_stats": output.get("case_file_stats")
-                or _estimate_case_file_tokens(case.diff_text),
-                "findings": output.get("findings", []),
-                "decision_trace": output.get("decision_trace"),
-                "policy_effects": output.get("policy_effects", []),
-                "proof_obligations": output.get("proof_obligations", {}),
-                "contradictions": output.get("contradictions", []),
-                "fallback_reason": output.get("fallback_reason"),
-                "failure_category": output.get("failure_category"),
-            }
-            if output.get("aggregation_trace"):
-                result["aggregation_trace"] = output.get("aggregation_trace")
-            return result
-
-        results, passed_count, pass_rate, avg_latency_ms, avg_tokens = _run_eval(
-            cases,
-            recommend,
-            inter_case_delay_ms=getattr(args, "case_delay_ms", 0),
-        )
-        metrics = compute_eval_metrics(
-            results,
-            prompt_version=prompt_metadata.prompt_version,
-            language_group=prompt_metadata.language_group,
-            promotion_status=prompt_metadata.promotion_status,
-            total_case_count=batch_meta["total_case_count"],
-        )
-        metrics["baseline_coverage_complete"] = not metrics["is_subset_run"]
-        metrics["missing_fixture_names"] = []
-        metrics["unexpected_fixture_names"] = []
-        metrics["missing_baseline_categories"] = []
-        mode_used_for_summary = args.mode
-        print(
-            "Batch selection: "
-            f"index={batch_meta['batch_index']} size={batch_meta['batch_size']} "
-            f"cases={batch_meta['batch_case_count']}/{batch_meta['total_case_count']}"
-        )
-
-    metrics["evaluation_mode"] = "pipeline_parity"
-
-    eval_reporting.print_case_results(
-        results,
-        build_observed_summary_fn=build_observed_summary,
-    )
-    eval_reporting.print_metrics_summary(
-        passed_count=passed_count,
-        result_count=len(results),
-        pass_rate=pass_rate,
-        mode_used_for_summary=mode_used_for_summary,
-        avg_latency_ms=avg_latency_ms,
-        avg_tokens=avg_tokens,
-        metrics=metrics,
-    )
-
-    failure_codes: list[str] = []
-    gate_failures: list[str] = []
-    baseline_gate_failures: list[str] = []
-    if metrics["evaluated_fixture_count"] == 0:
-        gate_failures.append("aggregate coverage produced zero evaluated fixtures.")
-        failure_codes.append("no_evaluated_fixtures")
-    if metrics["missing_fixture_names"]:
-        gate_failures.append(
-            "aggregate coverage missing fixture results: "
-            + ", ".join(metrics["missing_fixture_names"])
-        )
-        failure_codes.append("missing_fixture_results")
-    if metrics["unexpected_fixture_names"]:
-        gate_failures.append(
-            "aggregate coverage included unexpected fixture results: "
-            + ", ".join(metrics["unexpected_fixture_names"])
-        )
-        failure_codes.append("unexpected_fixture_results")
-    should_apply_traceability_gate = (
-        bool(args.aggregate_json_dir) or str(preflight.get("status", "")).strip().lower() == "ok"
-    )
-    if should_apply_traceability_gate:
-        unexpected_manual_review_rate = float(
-            metrics.get("unexpected_manual_review_rate", metrics.get("manual_review_rate", 0.0))
-            or 0.0
-        )
-        if unexpected_manual_review_rate > STRICT_MAX_MANUAL_REVIEW_RATE:
-            gate_failures.append(
-                "unexpected_manual_review_rate exceeded strict threshold: "
-                f"{unexpected_manual_review_rate:.2%} > {STRICT_MAX_MANUAL_REVIEW_RATE:.0%}"
-            )
-            failure_codes.append("manual_review_rate_exceeded")
-        critical_missing_total = int(
-            metrics.get(
-                "unexpected_critical_missing_proofs_total",
-                metrics.get("critical_missing_proofs_total", 0),
-            )
-            or 0
-        )
-        if critical_missing_total > STRICT_MAX_CRITICAL_MISSING_PROOFS:
-            gate_failures.append(
-                "unexpected_critical_missing_proofs_total exceeded strict threshold: "
-                f"{critical_missing_total} > {STRICT_MAX_CRITICAL_MISSING_PROOFS}"
-            )
-            failure_codes.append("critical_missing_proofs_present")
-        contradiction_count = int(metrics.get("contradiction_count", 0) or 0)
-        if contradiction_count > STRICT_MAX_CONTRADICTIONS:
-            gate_failures.append(
-                "contradiction_count exceeded strict threshold: "
-                f"{contradiction_count} > {STRICT_MAX_CONTRADICTIONS}"
-            )
-            failure_codes.append("contradictions_present")
-    mode_normalized = str(args.mode or "").strip().lower()
-    is_stub_mode = mode_normalized == "stub"
-    baseline_path = Path(args.prompt_gate_baseline) if args.prompt_gate_baseline else None
-    if is_stub_mode and baseline_path and baseline_path.exists():
-        print(
-            "Stub mode: skipping prompt-gate baseline "
-            "(model-quality gates require auto/github-models/openrouter modes)."
-        )
-        baseline_path = None
-    if baseline_path and baseline_path.exists():
-        baseline = load_prompt_gate_baseline(baseline_path)
-        missing_categories = sorted(
-            set(baseline["min_category_pass_rates"]) - set(metrics["category_pass_rates"])
-        )
-        metrics["missing_baseline_categories"] = missing_categories
-        metrics["baseline_coverage_complete"] = (
-            metrics["baseline_coverage_complete"] and not missing_categories
-        )
-        baseline_gate_failures = compare_against_prompt_gate(metrics, baseline)
-        gate_failures.extend(baseline_gate_failures)
-        if baseline_gate_failures:
-            failure_codes.append("prompt_gate_regression")
-            print("Prompt gate failures:")
-            for failure in baseline_gate_failures:
-                print(f"- {failure}")
-        else:
-            print(
-                "Prompt gate passed "
-                f"against baseline={baseline_path} for language_group={args.language_group}"
-            )
-    if metrics["is_subset_run"]:
-        print("Subset run detected: baseline comparison is diagnostic-only for present categories.")
-
-    payload = {
-        "prompt_version": prompt_metadata.prompt_version,
-        "language_group": prompt_metadata.language_group,
-        "promotion_status": prompt_metadata.promotion_status,
-        "preflight": preflight,
-        "results": _serialize_results(results),
-        "metrics": metrics,
-        "gate": {
-            "failures": gate_failures,
-            "failure_codes": failure_codes,
-            "strict": args.strict,
-        },
-    }
-    _write_output_json(args.output_json, payload)
-
-    if args.strict:
-        if "no_evaluated_fixtures" in failure_codes:
-            return 1
-        if failure_codes and not metrics["is_subset_run"]:
-            return 1
-        if is_stub_mode:
-            print("Stub mode strict gate: skipping accuracy thresholds (smoke mode).")
-            return 0
-        if (
-            baseline_path
-            and baseline_path.exists()
-            and baseline_gate_failures
-            and not metrics["is_subset_run"]
-        ):
-            return 1
-        if (not baseline_path or not baseline_path.exists()) and pass_rate < args.min_pass_rate:
-            print(
-                f"Pass rate below threshold: {pass_rate:.2f} < {args.min_pass_rate:.2f}. "
-                "Treating as failure."
-            )
-            return 1
-
-    return 0
+    return run(args, runtime=sys.modules[__name__])
 
 
 if __name__ == "__main__":
