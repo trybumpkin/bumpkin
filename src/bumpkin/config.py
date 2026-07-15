@@ -115,43 +115,57 @@ def _ensure_positive_int(value: Any, field_name: str, *, default: int) -> int:
     return parsed
 
 
-def _ensure_truncated_no_bump_policy(value: Any) -> str:
+def _ensure_choice(
+    value: Any,
+    field_name: str,
+    *,
+    default: str,
+    allowed: set[str],
+    case: str,
+    allowed_text: str,
+) -> str:
     if value is None:
-        return "MANUAL_REVIEW"
+        return default
     if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `truncated_no_bump_policy` must be a string.")
-    normalized = value.strip().upper()
-    if normalized not in {"MANUAL_REVIEW", "PATCH"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `truncated_no_bump_policy` must be MANUAL_REVIEW or PATCH."
-        )
+        raise ValueError(f"Invalid bumpkin.yml: `{field_name}` must be a string.")
+    normalized = value.strip()
+    normalized = normalized.upper() if case == "upper" else normalized.lower()
+    if normalized not in allowed:
+        raise ValueError(f"Invalid bumpkin.yml: `{field_name}` must be {allowed_text}.")
     return normalized
+
+
+def _ensure_truncated_no_bump_policy(value: Any) -> str:
+    return _ensure_choice(
+        value,
+        "truncated_no_bump_policy",
+        default="MANUAL_REVIEW",
+        allowed={"MANUAL_REVIEW", "PATCH"},
+        case="upper",
+        allowed_text="MANUAL_REVIEW or PATCH",
+    )
 
 
 def _ensure_chunk_failure_policy(value: Any) -> str:
-    if value is None:
-        return "MANUAL_REVIEW"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `chunk_failure_policy` must be a string.")
-    normalized = value.strip().upper()
-    if normalized not in {"MANUAL_REVIEW", "PATCH"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `chunk_failure_policy` must be MANUAL_REVIEW or PATCH."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "chunk_failure_policy",
+        default="MANUAL_REVIEW",
+        allowed={"MANUAL_REVIEW", "PATCH"},
+        case="upper",
+        allowed_text="MANUAL_REVIEW or PATCH",
+    )
 
 
 def _ensure_impact_evidence_threshold(value: Any) -> str:
-    if value is None:
-        return "moderate"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `impact_evidence_threshold` must be a string.")
-    normalized = value.strip().lower()
-    if normalized not in {"lenient", "moderate", "strict"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `impact_evidence_threshold` must be lenient, moderate, or strict."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "impact_evidence_threshold",
+        default="moderate",
+        allowed={"lenient", "moderate", "strict"},
+        case="lower",
+        allowed_text="lenient, moderate, or strict",
+    )
 
 
 def _default_unknown_boundary_policy(*, policy_mode: str, bugfix_patch_bias: bool) -> str:
@@ -184,128 +198,97 @@ def _ensure_unknown_boundary_policy(
 
 
 def _ensure_behavior_contract_policy(value: Any) -> str:
-    if value is None:
-        return "path_signals"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `behavior_contract_policy` must be a string.")
-    normalized = value.strip().lower()
-    if normalized not in {"off", "path_signals"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `behavior_contract_policy` must be off or path_signals."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "behavior_contract_policy",
+        default="path_signals",
+        allowed={"off", "path_signals"},
+        case="lower",
+        allowed_text="off or path_signals",
+    )
 
 
 def _ensure_noise_suppression_policy(value: Any) -> str:
-    if value is None:
-        return "balanced"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `noise_suppression_policy` must be a string.")
-    normalized = value.strip().lower()
-    if normalized not in {"off", "balanced", "strict"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `noise_suppression_policy` must be off, balanced, or strict."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "noise_suppression_policy",
+        default="balanced",
+        allowed={"off", "balanced", "strict"},
+        case="lower",
+        allowed_text="off, balanced, or strict",
+    )
 
 
 def _ensure_override_governance_policy(value: Any) -> str:
-    if value is None:
-        return "strict_audit"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `override_governance_policy` must be a string.")
-    normalized = value.strip().lower()
-    if normalized not in {"strict_audit", "severity_precedence"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `override_governance_policy` must be strict_audit or severity_precedence."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "override_governance_policy",
+        default="strict_audit",
+        allowed={"strict_audit", "severity_precedence"},
+        case="lower",
+        allowed_text="strict_audit or severity_precedence",
+    )
 
 
 def _ensure_degraded_provider_policy(value: Any) -> str:
-    if value is None:
-        return "MANUAL_REVIEW"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `degraded_provider_policy` must be a string.")
-    normalized = value.strip().upper()
-    if normalized not in {"MANUAL_REVIEW", "PATCH"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `degraded_provider_policy` must be MANUAL_REVIEW or PATCH."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "degraded_provider_policy",
+        default="MANUAL_REVIEW",
+        allowed={"MANUAL_REVIEW", "PATCH"},
+        case="upper",
+        allowed_text="MANUAL_REVIEW or PATCH",
+    )
 
 
 def _ensure_decision_authority_mode(value: Any) -> str:
-    if value is None:
-        return "court"
-    if not isinstance(value, str):
-        raise ValueError("Invalid bumpkin.yml: `decision_authority_mode` must be a string.")
-    normalized = value.strip().lower()
-    if normalized not in {"deterministic", "court"}:
-        raise ValueError(
-            "Invalid bumpkin.yml: `decision_authority_mode` must be deterministic or court."
-        )
-    return normalized
+    return _ensure_choice(
+        value,
+        "decision_authority_mode",
+        default="court",
+        allowed={"deterministic", "court"},
+        case="lower",
+        allowed_text="deterministic or court",
+    )
+
+
+def _default_bumpkin_config() -> BumpkinConfig:
+    return BumpkinConfig(
+        ignore_paths=[],
+        surface_area=[],
+        public_api_entrypoints=[],
+        public_api_paths=[],
+        policy_mode="pragmatic",
+        bugfix_patch_bias=True,
+        use_difftastic=False,
+        semantic_fallback=True,
+        pre_1_0_breaking_as_minor=True,
+        docs_only_label="NO_BUMP",
+        large_pr_max_files=30,
+        large_pr_max_tokens=6000,
+        truncated_no_bump_policy="MANUAL_REVIEW",
+        chunking_enabled=True,
+        chunk_max_tokens=1200,
+        chunk_max_count=24,
+        chunk_failure_policy="MANUAL_REVIEW",
+        impact_evidence_threshold="moderate",
+        unknown_boundary_policy="patch_if_bugfix",
+        behavior_contract_policy="path_signals",
+        noise_suppression_policy="balanced",
+        override_governance_policy="strict_audit",
+        degraded_provider_policy="MANUAL_REVIEW",
+        decision_authority_mode="court",
+    )
 
 
 def load_bumpkin_config(path: Path | None = None) -> BumpkinConfig:
     config_path = path or Path("bumpkin.yml")
     if not config_path.exists():
-        return BumpkinConfig(
-            ignore_paths=[],
-            surface_area=[],
-            public_api_entrypoints=[],
-            public_api_paths=[],
-            policy_mode="pragmatic",
-            bugfix_patch_bias=True,
-            use_difftastic=False,
-            semantic_fallback=True,
-            pre_1_0_breaking_as_minor=True,
-            docs_only_label="NO_BUMP",
-            large_pr_max_files=30,
-            large_pr_max_tokens=6000,
-            truncated_no_bump_policy="MANUAL_REVIEW",
-            chunking_enabled=True,
-            chunk_max_tokens=1200,
-            chunk_max_count=24,
-            chunk_failure_policy="MANUAL_REVIEW",
-            impact_evidence_threshold="moderate",
-            unknown_boundary_policy="patch_if_bugfix",
-            behavior_contract_policy="path_signals",
-            noise_suppression_policy="balanced",
-            override_governance_policy="strict_audit",
-            degraded_provider_policy="MANUAL_REVIEW",
-            decision_authority_mode="court",
-        )
+        return _default_bumpkin_config()
 
     parsed = yaml.safe_load(config_path.read_text())
     if parsed is None:
-        return BumpkinConfig(
-            ignore_paths=[],
-            surface_area=[],
-            public_api_entrypoints=[],
-            public_api_paths=[],
-            policy_mode="pragmatic",
-            bugfix_patch_bias=True,
-            use_difftastic=False,
-            semantic_fallback=True,
-            pre_1_0_breaking_as_minor=True,
-            docs_only_label="NO_BUMP",
-            large_pr_max_files=30,
-            large_pr_max_tokens=6000,
-            truncated_no_bump_policy="MANUAL_REVIEW",
-            chunking_enabled=True,
-            chunk_max_tokens=1200,
-            chunk_max_count=24,
-            chunk_failure_policy="MANUAL_REVIEW",
-            impact_evidence_threshold="moderate",
-            unknown_boundary_policy="patch_if_bugfix",
-            behavior_contract_policy="path_signals",
-            noise_suppression_policy="balanced",
-            override_governance_policy="strict_audit",
-            degraded_provider_policy="MANUAL_REVIEW",
-            decision_authority_mode="court",
-        )
+        return _default_bumpkin_config()
     if not isinstance(parsed, dict):
         raise ValueError("Invalid bumpkin.yml: top-level content must be a mapping.")
 
