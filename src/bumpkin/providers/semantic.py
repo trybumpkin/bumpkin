@@ -164,23 +164,31 @@ def _collect_added_removed_lines(diff_text: str) -> tuple[list[str], list[str]]:
 def _extract_export_names(lines: list[str]) -> set[str]:
     names: set[str] = set()
     for line in lines:
-        for pattern in EXPORT_LINE_PATTERNS:
-            match = pattern.search(line)
-            if match:
-                names.add(match.group(1))
-        if "export default" in line:
-            names.add("__default__")
-        brace_match = re.search(r"\bexport\s*{\s*([^}]+)\s*}", line)
-        if brace_match:
-            members = [item.strip() for item in brace_match.group(1).split(",")]
-            for member in members:
-                if not member:
-                    continue
-                lowered = member.lower()
-                if " as " in lowered:
-                    names.add(member.split(" as ", 1)[1].strip())
-                else:
-                    names.add(member)
+        names.update(_extract_declared_export_names(line))
+        names.update(_extract_braced_export_names(line))
+    return names
+
+
+def _extract_declared_export_names(line: str) -> set[str]:
+    names: set[str] = set()
+    for pattern in EXPORT_LINE_PATTERNS:
+        match = pattern.search(line)
+        if match:
+            names.add(match.group(1))
+    if "export default" in line:
+        names.add("__default__")
+    return names
+
+
+def _extract_braced_export_names(line: str) -> set[str]:
+    brace_match = re.search(r"\bexport\s*{\s*([^}]+)\s*}", line)
+    if brace_match is None:
+        return set()
+    names: set[str] = set()
+    for member in (item.strip() for item in brace_match.group(1).split(",")):
+        if not member:
+            continue
+        names.add(member.split(" as ", 1)[-1].strip())
     return names
 
 
@@ -385,12 +393,11 @@ def semantic_fallback_recommendation(
 ) -> dict[str, Any]:
     paths = _extract_changed_paths(diff_text)
     if _looks_docs_or_config_only(paths):
-        reasoning = (
+        reasoning = _with_truncation(
             "Semantic fallback classified this as docs/config-only because all changed paths "
-            "match documentation or repository config patterns."
+            "match documentation or repository config patterns.",
+            truncated,
         )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="NO_BUMP",
             confidence="high",
@@ -402,164 +409,172 @@ def semantic_fallback_recommendation(
     changed_lines = removed_lines + added_lines
     removed_exports = _extract_export_names(removed_lines)
     added_exports = _extract_export_names(added_lines)
+    export_result = _classify_export_changes(
+        removed_lines=removed_lines,
+        added_lines=added_lines,
+        removed_exports=removed_exports,
+        added_exports=added_exports,
+        surface_area_hints=surface_area_hints,
+        truncated=truncated,
+    )
+    if export_result is not None:
+        return export_result
+    return _classify_content_changes(
+        diff_text=diff_text,
+        paths=paths,
+        changed_lines=changed_lines,
+        removed_lines=removed_lines,
+        added_lines=added_lines,
+        surface_area_hints=surface_area_hints,
+        truncated=truncated,
+    )
 
+
+def _classify_export_changes(
+    *,
+    removed_lines: list[str],
+    added_lines: list[str],
+    removed_exports: set[str],
+    added_exports: set[str],
+    surface_area_hints: list[str] | None,
+    truncated: bool,
+) -> dict[str, Any] | None:
     removed_only = sorted(removed_exports - added_exports)
     if removed_only:
-        reasoning = (
-            "Semantic fallback detected removed exported API symbols: "
-            + ", ".join(removed_only)
-            + "."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="MAJOR",
             confidence="high",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected removed exported API symbols: "
+                + ", ".join(removed_only)
+                + ".",
+                truncated,
+            ),
             changelog="feat: remove exported api symbols",
         )
 
     shared_exports = removed_exports & added_exports
     signature_change = _classify_export_signature_change(removed_lines, added_lines, shared_exports)
     if signature_change == "major":
-        reasoning = (
-            "Semantic fallback detected changed exported function signatures for existing "
-            "API symbols."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="MAJOR",
             confidence="medium",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected changed exported function signatures for existing API symbols.",
+                truncated,
+            ),
             changelog="feat: update exported api signatures",
         )
     if signature_change == "minor":
-        reasoning = (
-            "Semantic fallback detected a backward-compatible exported signature widening "
-            "(optional parameter addition)."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="MINOR",
             confidence="medium",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected a backward-compatible exported signature widening (optional parameter addition).",
+                truncated,
+            ),
             changelog="feat: widen exported api signature",
         )
 
     if surface_area_hints:
         removed_signatures = _extract_symbol_signatures(removed_lines, exported_only=False)
         added_signatures = _extract_symbol_signatures(added_lines, exported_only=False)
-        shared_symbols = set(removed_signatures) & set(added_signatures)
-        for symbol in sorted(shared_symbols):
+        for symbol in sorted(set(removed_signatures) & set(added_signatures)):
             if removed_signatures[symbol] != added_signatures[symbol]:
-                reasoning = (
-                    "Semantic fallback detected a signature change for symbol "
-                    f"{symbol} while surface_area hints are configured, "
-                    "so this is treated as a public breaking change."
-                )
-                if truncated:
-                    reasoning += " Diff was truncated."
                 return classified_result(
                     label="MAJOR",
                     confidence="medium",
-                    reasoning=reasoning,
+                    reasoning=_with_truncation(
+                        "Semantic fallback detected a signature change for symbol "
+                        f"{symbol} while surface_area hints are configured, so this is treated as a public breaking change.",
+                        truncated,
+                    ),
                     changelog="feat: change surface-area api signature",
                 )
 
     added_only = sorted(added_exports - removed_exports)
     if added_only:
-        reasoning = (
-            "Semantic fallback detected newly exported API symbols: " + ", ".join(added_only) + "."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="MINOR",
             confidence="high",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected newly exported API symbols: "
+                + ", ".join(added_only)
+                + ".",
+                truncated,
+            ),
             changelog="feat: add exported api symbols",
         )
+    return None
 
+
+def _classify_content_changes(
+    *,
+    diff_text: str,
+    paths: list[str],
+    changed_lines: list[str],
+    removed_lines: list[str],
+    added_lines: list[str],
+    surface_area_hints: list[str] | None,
+    truncated: bool,
+) -> dict[str, Any]:
     if _looks_ambiguous_code_summary(changed_lines):
-        reasoning = (
-            "Semantic fallback detected an ambiguous prose summary of runtime/API changes "
-            "without concrete public symbol evidence."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="PATCH",
             confidence="low",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected an ambiguous prose summary of runtime/API changes without concrete public symbol evidence.",
+                truncated,
+            ),
             changelog="fix: ambiguous runtime refactor",
         )
-
     if _looks_docs_or_config_content_only(changed_lines):
-        reasoning = (
-            "Semantic fallback classified this as docs/config-only content because the diff "
-            "contains prose or metadata changes without code markers."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
         return classified_result(
             label="NO_BUMP",
             confidence="high",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback classified this as docs/config-only content because the diff contains prose or metadata changes without code markers.",
+                truncated,
+            ),
             changelog="chore: no release required",
         )
 
     removed_signatures = _extract_symbol_signatures(removed_lines, exported_only=False)
     added_signatures = _extract_symbol_signatures(added_lines, exported_only=False)
-    shared_signatures = set(removed_signatures) & set(added_signatures)
-    for symbol in sorted(shared_signatures):
+    for symbol in sorted(set(removed_signatures) & set(added_signatures)):
         if removed_signatures[symbol] != added_signatures[symbol]:
-            reasoning = (
-                "Semantic fallback detected a non-exported signature change "
-                f"for symbol {symbol}, but public API status is unclear."
-            )
-            if truncated:
-                reasoning += " Diff was truncated."
             return classified_result(
                 label="PATCH",
                 confidence="low",
-                reasoning=reasoning,
+                reasoning=_with_truncation(
+                    "Semantic fallback detected a non-exported signature change "
+                    f"for symbol {symbol}, but public API status is unclear.",
+                    truncated,
+                ),
                 changelog="fix: adjust internal helper signature",
             )
-
     if _surface_area_triggered(diff_text, surface_area_hints):
         return manual_review_result(
-            reasoning=(
-                "Semantic fallback detected changes in configured surface_area paths but "
-                "could not confidently classify impact. Please review manually."
-            )
+            reasoning="Semantic fallback detected changes in configured surface_area paths but could not confidently classify impact. Please review manually."
         )
-
-    has_code_delta = bool(changed_lines)
-    touches_export_markers = _has_public_export_markers(removed_lines + added_lines)
-    if has_code_delta and not touches_export_markers:
-        preview = _paths_preview(paths)
-        reasoning = (
-            "Semantic fallback detected internal code changes in "
-            f"{preview} without public/export API markers, "
-            "classifying as internal patch."
-        )
-        if truncated:
-            reasoning += " Diff was truncated."
+    if changed_lines and not _has_public_export_markers(removed_lines + added_lines):
         return classified_result(
             label="PATCH",
             confidence="medium",
-            reasoning=reasoning,
+            reasoning=_with_truncation(
+                "Semantic fallback detected internal code changes in "
+                f"{_paths_preview(paths)} without public/export API markers, classifying as internal patch.",
+                truncated,
+            ),
             changelog=_internal_patch_changelog(paths),
         )
-
     return manual_review_result(
-        reasoning=(
-            "Semantic fallback could not confidently infer SemVer impact from this diff. "
-            "Please review manually."
-        )
+        reasoning="Semantic fallback could not confidently infer SemVer impact from this diff. Please review manually."
     )
+
+
+def _with_truncation(reasoning: str, truncated: bool) -> str:
+    return f"{reasoning} Diff was truncated." if truncated else reasoning
 
 
 def stub_recommendation(truncated: bool) -> dict[str, Any]:

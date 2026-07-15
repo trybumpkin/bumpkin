@@ -8,12 +8,11 @@ import urllib.request
 from typing import Any, cast
 
 from bumpkin.io.tokens import is_github_models_endpoint, is_openrouter_endpoint
-from bumpkin.retry import (
+from bumpkin.request_pacing import (
     apply_model_call_interval,
-    compute_retry_delay,
-    is_retryable_http_code,
     register_rate_limit_cooldown,
 )
+from bumpkin.retry import compute_retry_delay, is_retryable_http_code
 
 
 class LLMUnavailableError(RuntimeError):

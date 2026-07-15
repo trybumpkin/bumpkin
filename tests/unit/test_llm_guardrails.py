@@ -87,6 +87,18 @@ def test_extract_json_payload_handles_nested_json_string() -> None:
     assert payload["label"] == "PATCH"
 
 
+def test_extract_json_payload_repairs_unclosed_object() -> None:
+    payload = _extract_json_payload(
+        "{\n"
+        '"label":"PATCH",\n'
+        '"confidence":"high",\n'
+        '"reasoning":"Adjusted internal helper so the final payload is recoverable.",\n'
+        '"changelog":"fix: recover truncated output"\n'
+    )
+    assert payload["label"] == "PATCH"
+    assert payload["changelog"] == "fix: recover truncated output"
+
+
 def test_coerce_recommendation_payload_maps_alias_fields() -> None:
     payload = _coerce_recommendation_payload(
         {

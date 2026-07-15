@@ -78,118 +78,21 @@ LABEL_PRIORITY = {"NO_BUMP": 0, "PATCH": 1, "MINOR": 2, "MAJOR": 3}
 
 LLMResponseError = _LLMResponseError_impl
 
-
-def _provider_mode_for_endpoint(endpoint: str) -> str:
-    return _provider_mode_for_endpoint_impl(endpoint)
-
-
-def _normalize_request_endpoint(endpoint: str) -> str:  # pyright: ignore[reportUnusedFunction]
-    return _normalize_request_endpoint_impl(endpoint)
-
-
-def _request_headers(token: str, endpoint: str) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
-    return _request_headers_impl(token, endpoint)
-
-
-def _semantic_fallback_recommendation(
-    *,
-    diff_text: str,
-    surface_area_hints: list[str] | None,
-    truncated: bool,
-) -> dict[str, Any]:
-    return _semantic_fallback_recommendation_impl(
-        diff_text=diff_text,
-        surface_area_hints=surface_area_hints,
-        truncated=truncated,
-    )
-
-
-def _classified_result(
-    *,
-    label: str,
-    confidence: str,
-    reasoning: str,
-    changelog: str,
-) -> dict[str, Any]:
-    return _classified_result_impl(
-        label=label,
-        confidence=confidence,
-        reasoning=reasoning,
-        changelog=changelog,
-    )
-
-
-def _manual_review_result(
-    *,
-    reasoning: str,
-) -> dict[str, Any]:
-    return _manual_review_result_impl(reasoning=reasoning)
-
-
-def get_stub_recommendation(truncated: bool) -> dict[str, Any]:
-    return _stub_recommendation_impl(truncated)
-
-
-def get_no_bump_recommendation(truncated: bool) -> dict[str, Any]:
-    return _no_bump_recommendation_impl(truncated)
-
-
-def validate_recommendation(payload: dict[str, Any]) -> dict[str, str]:
-    return _validate_recommendation_impl(payload)
-
-
-def _normalize_label(value: Any) -> str | None:  # pyright: ignore[reportUnusedFunction]
-    return _normalize_label_impl(value)
-
-
-def _normalize_confidence(value: Any) -> str | None:  # pyright: ignore[reportUnusedFunction]
-    return _normalize_confidence_impl(value)
-
-
-def _coerce_recommendation_payload(payload: object) -> dict[str, Any]:
-    return _coerce_recommendation_payload_impl(payload)
-
-
-def _build_messages(
-    diff_text: str,
-    language_group: str | None = None,
-    prompt_version: str | None = None,
-    surface_area_hints: list[str] | None = None,
-    language_hints: list[str] | None = None,
-) -> list[dict[str, str]]:
-    return build_prompt_messages(
-        diff_text=diff_text,
-        language_group=language_group,
-        prompt_version=prompt_version,
-        surface_area_hints=surface_area_hints,
-        language_hints=language_hints,
-    )
-
-
-def _split_diff_units_into_chunks(
-    diff_units: list[tuple[str, str]],
-    *,
-    max_chunk_tokens: int,
-    max_chunk_count: int,
-) -> tuple[list[dict[str, Any]], int, set[str], set[str]]:
-    return _split_diff_units_into_chunks_impl(
-        diff_units,
-        max_chunk_tokens=max_chunk_tokens,
-        max_chunk_count=max_chunk_count,
-    )
-
-
-def _split_diff_into_chunks(
-    diff_text: str,
-    *,
-    max_chunk_tokens: int,
-    max_chunk_count: int,
-) -> tuple[list[str], int]:
-    return _split_diff_into_chunks_impl(
-        diff_text,
-        max_chunk_tokens=max_chunk_tokens,
-        max_chunk_count=max_chunk_count,
-    )
+_provider_mode_for_endpoint = _provider_mode_for_endpoint_impl
+_normalize_request_endpoint = _normalize_request_endpoint_impl
+_request_headers = _request_headers_impl
+_semantic_fallback_recommendation = _semantic_fallback_recommendation_impl
+_classified_result = _classified_result_impl
+_manual_review_result = _manual_review_result_impl
+get_stub_recommendation = _stub_recommendation_impl
+get_no_bump_recommendation = _no_bump_recommendation_impl
+validate_recommendation = _validate_recommendation_impl
+_normalize_label = _normalize_label_impl
+_normalize_confidence = _normalize_confidence_impl
+_coerce_recommendation_payload = _coerce_recommendation_payload_impl
+_build_messages = build_prompt_messages
+_split_diff_units_into_chunks = _split_diff_units_into_chunks_impl
+_split_diff_into_chunks = _split_diff_into_chunks_impl
 
 
 def _aggregate_chunk_recommendations(
@@ -206,41 +109,9 @@ def _aggregate_chunk_recommendations(
     )
 
 
-def _with_chunking_metadata(
-    result: dict[str, Any],
-    *,
-    enabled: bool,
-    chunk_count: int,
-    succeeded: int,
-    failed: int,
-    skipped: int,
-    max_chunk_tokens: int,
-    max_chunk_count: int,
-    failure_policy: str,
-    files_total: int = 0,
-    omitted_files: list[str] | None = None,
-) -> dict[str, Any]:
-    return _with_chunking_metadata_impl(
-        result,
-        enabled=enabled,
-        chunk_count=chunk_count,
-        succeeded=succeeded,
-        failed=failed,
-        skipped=skipped,
-        max_chunk_tokens=max_chunk_tokens,
-        max_chunk_count=max_chunk_count,
-        failure_policy=failure_policy,
-        files_total=files_total,
-        omitted_files=omitted_files,
-    )
-
-
-def _extract_content(response_payload: dict[str, Any]) -> str:
-    return _extract_content_impl(response_payload)
-
-
-def _extract_json_payload(content: str) -> dict[str, Any]:
-    return _extract_json_payload_impl(content)
+_with_chunking_metadata = _with_chunking_metadata_impl
+_extract_content = _extract_content_impl
+_extract_json_payload = _extract_json_payload_impl
 
 
 def _call_github_models(
@@ -257,8 +128,7 @@ def _call_github_models(
 ) -> dict[str, str]:
     if not token:
         raise LLMUnavailableError(
-            "No token available for model provider. Provide MODELS_TOKEN, GITHUB_MODELS_TOKEN, "
-            "or OPENROUTER_API_KEY/OPENROUTER_API."
+            "No API key available for model provider. Provide BUMPKIN_API_KEY."
         )
 
     payload = {
