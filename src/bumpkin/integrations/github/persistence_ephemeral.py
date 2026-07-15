@@ -26,6 +26,8 @@ from bumpkin.integrations.github.types import AppEvent
 
 
 class EphemeralAppStateStore:
+    """In-memory store for local runs; unsupported durable records are no-ops."""
+
     def __init__(self) -> None:
         self._events: dict[tuple[str, str], StoredEventRecord] = {}
         self._recommendations: dict[tuple[str, int], RecommendationSnapshot] = {}
@@ -142,7 +144,7 @@ class EphemeralAppStateStore:
         source_event_id: str | None = None,
         recorded_at: datetime | None = None,
     ) -> None:
-        del source, source_event_id, recorded_at
+        _ = source, source_event_id, recorded_at
         key = (repository.strip(), int(pull_request_number))
         self._recommendations[key] = RecommendationSnapshot(
             label=label.strip(),
@@ -250,7 +252,7 @@ class EphemeralAppStateStore:
         commit_sha: str,
         source_event_id: str | None = None,
     ) -> int:
-        del approval, commit_sha, source_event_id
+        _ = approval, commit_sha, source_event_id
         return 0
 
     def latest_approval_for_pr(
@@ -259,11 +261,11 @@ class EphemeralAppStateStore:
         repository: str,
         pull_request_number: int,
     ) -> ApprovalRecord | None:
-        del repository, pull_request_number
+        _ = repository, pull_request_number
         return None
 
     def delete_approvals(self, *, repository: str, pull_request_number: int) -> int:
-        del repository, pull_request_number
+        _ = repository, pull_request_number
         return 0
 
     def record_publish_decision(
@@ -276,7 +278,14 @@ class EphemeralAppStateStore:
         policy_snapshot: dict[str, Any],
         evaluated_at: datetime | None = None,
     ) -> int:
-        del repository, pull_request_number, commit_sha, decision, policy_snapshot, evaluated_at
+        _ = (
+            repository,
+            pull_request_number,
+            commit_sha,
+            decision,
+            policy_snapshot,
+            evaluated_at,
+        )
         return 0
 
     def latest_publish_decision_for_pr(
@@ -285,9 +294,9 @@ class EphemeralAppStateStore:
         repository: str,
         pull_request_number: int,
     ) -> PublishDecisionRecord | None:
-        del repository, pull_request_number
+        _ = repository, pull_request_number
         return None
 
     def list_audit_entries(self, *, entity_type: str, entity_id: str) -> list[AuditLogRecord]:
-        del entity_type, entity_id
+        _ = entity_type, entity_id
         return []

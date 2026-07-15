@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from bumpkin.integrations.github.guards import PublishGuardDecision
+from bumpkin.integrations.github.persistence_audit_payloads import (
+    build_publish_decision_recorded_payload as _build_publish_decision_recorded_payload,
+)
+from bumpkin.integrations.github.persistence_serialization import (
+    json_dump as _json_dump,
+)
+from bumpkin.integrations.github.persistence_serialization import (
+    normalize_timestamp as _normalize_timestamp,
+)
+from bumpkin.integrations.github.persistence_serialization import (
+    postgres_row_mapping as _postgres_row_mapping,
+)
+from bumpkin.integrations.github.persistence_serialization import (
+    to_iso as _to_iso,
+)
+
+
+def record_publish_decision(
+    self,
+    *,
+    repository: str,
+    pull_request_number: int,
+    commit_sha: str,
+    decision: PublishGuardDecision,
+    policy_snapshot: dict[str, Any],
+    evaluated_at: datetime | None = None,
+) -> int:
+    normalized_evaluated_at = _normalize_timestamp(
+        evaluated_at or datetime.now(timezone.utc),  # noqa: UP017
+    )
+    guard_reasons = list(decision.guard_reasons)
+    reason = guard_reasons[0] if guard_reasons else "allowed"
+    with self._connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO publish_decisions (
+                repository,
+                pull_request_number,
+                commit_sha,
+                allowed,
+                reason,
+                guard_reasons,
+                evaluated_at,
+                policy_snapshot
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                repository,
+                pull_request_number,
+                commit_sha,
+                decision.allowed,
+                reason,
+                _json_dump({"guard_reasons": guard_reasons}),
+                _to_iso(normalized_evaluated_at),
+                _json_dump(policy_snapshot),
+            ),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise RuntimeError("Postgres did not return id for insert operation.")
+    row_map = _postgres_row_mapping(row)
+    if row_map["id"] is None:
+        raise RuntimeError("Postgres did not return id for insert operation.")
+    decision_id = int(row_map["id"])
+    self._record_audit(
+        **_build_publish_decision_recorded_payload(
+            decision_id=decision_id,
+            repository=repository,
+            pull_request_number=pull_request_number,
+            commit_sha=commit_sha,
+            decision=decision,
+        ).as_kwargs(),
+    )
+    self._connection.commit()
+    return decision_id
+
+
+class PostgresPublishDecisionOpsMixin:
+    record_publish_decision = record_publish_decision

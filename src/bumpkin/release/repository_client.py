@@ -1,59 +1,11 @@
 from __future__ import annotations
 
-import urllib.error
 import urllib.parse
 from typing import Protocol, cast
 
-from bumpkin.io.github_http import (
-    format_github_http_error,
-    github_request_bytes,
-    github_request_json,
-)
 from bumpkin.release.candidate import _parse_iso8601
 from bumpkin.release.models import ReleaseScopedPullRequest
-
-
-def _bytes_request(
-    *,
-    token: str,
-    url: str,
-    timeout_seconds: int,
-) -> bytes:
-    try:
-        body, _headers = github_request_bytes(
-            url=url,
-            method="GET",
-            timeout_seconds=timeout_seconds,
-            token=token,
-            user_agent="bumpkin-release-job",
-            strip_auth_on_cross_host_redirects=True,
-        )
-        return body
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
-
-
-def _json_request(
-    *,
-    token: str,
-    url: str,
-    timeout_seconds: int,
-) -> object:
-    try:
-        payload, _headers = github_request_json(
-            url=url,
-            method="GET",
-            timeout_seconds=timeout_seconds,
-            token=token,
-            user_agent="bumpkin-release-job",
-        )
-        return payload
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(format_github_http_error(err, prefix="GitHub API error")) from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"GitHub API request failed: {err.reason}") from err
+from bumpkin.release.repository_client_http import json_request
 
 
 class GitHubRepositoryClientProtocol(Protocol):
@@ -89,7 +41,7 @@ class GitHubRepositoryClient:
         tags: list[str] = []
         while True:
             url = f"https://api.github.com/repos/{self._repository}/tags?per_page=100&page={page}"
-            payload = _json_request(
+            payload = json_request(
                 token=self._token,
                 url=url,
                 timeout_seconds=self._timeout_seconds,
@@ -116,7 +68,7 @@ class GitHubRepositoryClient:
             f"https://api.github.com/repos/{self._repository}/compare/"
             f"{encoded_base}...{encoded_head}"
         )
-        payload = _json_request(
+        payload = json_request(
             token=self._token,
             url=url,
             timeout_seconds=self._timeout_seconds,
@@ -140,7 +92,7 @@ class GitHubRepositoryClient:
         if not normalized_sha:
             return []
         url = f"https://api.github.com/repos/{self._repository}/commits/{normalized_sha}/pulls"
-        payload = _json_request(
+        payload = json_request(
             token=self._token,
             url=url,
             timeout_seconds=self._timeout_seconds,
@@ -158,7 +110,7 @@ class GitHubRepositoryClient:
 
     def get_pull_request(self, number: int) -> ReleaseScopedPullRequest:
         url = f"https://api.github.com/repos/{self._repository}/pulls/{number}"
-        payload = _json_request(
+        payload = json_request(
             token=self._token,
             url=url,
             timeout_seconds=self._timeout_seconds,
@@ -233,6 +185,4 @@ __all__ = [
     "GitHubRepositoryClient",
     "GitHubRepositoryClientProtocol",
     "_build_repository_client",
-    "_bytes_request",
-    "_json_request",
 ]

@@ -278,55 +278,73 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
         _serialize_release_candidate(candidate),
     )
     if parsed.operation == "publish":
-        tag_publisher, release_publisher = _build_publishers(github_token=parsed.github_token)
-        execution = publish_release_plan(
-            plan,
-            tag_publisher=tag_publisher,
-            release_publisher=release_publisher,
+        return _publish_and_report(
+            plan=plan,
+            candidate=candidate,
+            parsed=parsed,
+            candidate_path=candidate_path,
+            notes_path=notes_path,
         )
-        release_url = execution.release_result.url if execution.release_result else None
-        tag_url = execution.tag_result.url if execution.tag_result else None
-        _append_step_summary(
-            _render_publish_step_summary(
-                status=execution.status,
-                plan=plan,
-                release_candidate=candidate,
-                release_url=release_url,
-                tag_url=tag_url,
-            )
-        )
-        _write_github_output(
-            _build_summary_payload(
-                status=execution.status,
-                plan=plan,
-                release_candidate=candidate,
-                candidate_path=candidate_path,
-                release_candidate_artifact_name=_RELEASE_CANDIDATE_ARTIFACT_NAME,
-                release_url=release_url,
-                tag_url=tag_url,
-                notes_path=notes_path,
-            )
-        )
-        print(
-            json.dumps(
-                {
-                    "status": execution.status,
-                    "previous_tag": plan.previous_tag,
-                    "next_tag": plan.next_tag,
-                    "release_label": plan.release_label,
-                    "pull_request_count": len(plan.pull_requests),
-                    "release_candidate_path": candidate_path,
-                    "release_candidate_run_id": candidate.source_run_id,
-                    "release_url": release_url,
-                    "tag_url": tag_url,
-                    "release_notes_path": notes_path,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return 0
+    return _preview_and_report(
+        plan=plan,
+        candidate=candidate,
+        candidate_path=candidate_path,
+        notes_path=notes_path,
+    )
 
+
+def _publish_and_report(
+    *,
+    plan: ReleasePlan,
+    candidate: ReleaseCandidate,
+    parsed: argparse.Namespace,
+    candidate_path: str,
+    notes_path: str,
+) -> int:
+    tag_publisher, release_publisher = _build_publishers(github_token=parsed.github_token)
+    execution = publish_release_plan(
+        plan,
+        tag_publisher=tag_publisher,
+        release_publisher=release_publisher,
+    )
+    release_url = execution.release_result.url if execution.release_result else None
+    tag_url = execution.tag_result.url if execution.tag_result else None
+    _append_step_summary(
+        _render_publish_step_summary(
+            status=execution.status,
+            plan=plan,
+            release_candidate=candidate,
+            release_url=release_url,
+            tag_url=tag_url,
+        )
+    )
+    _write_github_output(
+        _build_summary_payload(
+            status=execution.status,
+            plan=plan,
+            release_candidate=candidate,
+            candidate_path=candidate_path,
+            release_candidate_artifact_name=_RELEASE_CANDIDATE_ARTIFACT_NAME,
+            release_url=release_url,
+            tag_url=tag_url,
+            notes_path=notes_path,
+        )
+    )
+    _print_release_summary(
+        status=execution.status,
+        plan=plan,
+        candidate=candidate,
+        candidate_path=candidate_path,
+        notes_path=notes_path,
+        release_url=release_url,
+        tag_url=tag_url,
+    )
+    return 0
+
+
+def _preview_and_report(
+    *, plan: ReleasePlan, candidate: ReleaseCandidate, candidate_path: str, notes_path: str
+) -> int:
     _append_step_summary(plan.preview_notes)
     status = plan.status if plan.pull_requests else "skipped"
     _write_github_output(
@@ -339,23 +357,41 @@ def run_release_job(args: argparse.Namespace | None = None) -> int:
             notes_path=notes_path,
         )
     )
-    print(
-        json.dumps(
-            {
-                "status": status,
-                "previous_tag": plan.previous_tag,
-                "next_tag": plan.next_tag,
-                "release_label": plan.release_label,
-                "pull_request_count": len(plan.pull_requests),
-                "release_candidate_path": candidate_path,
-                "release_candidate_run_id": candidate.source_run_id,
-                "release_notes_path": notes_path,
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    _print_release_summary(
+        status=status,
+        plan=plan,
+        candidate=candidate,
+        candidate_path=candidate_path,
+        notes_path=notes_path,
     )
     return 0
+
+
+def _print_release_summary(
+    *,
+    status: str,
+    plan: ReleasePlan,
+    candidate: ReleaseCandidate,
+    candidate_path: str,
+    notes_path: str,
+    release_url: str | None = None,
+    tag_url: str | None = None,
+) -> None:
+    payload = {
+        "status": status,
+        "previous_tag": plan.previous_tag,
+        "next_tag": plan.next_tag,
+        "release_label": plan.release_label,
+        "pull_request_count": len(plan.pull_requests),
+        "release_candidate_path": candidate_path,
+        "release_candidate_run_id": candidate.source_run_id,
+        "release_notes_path": notes_path,
+    }
+    if release_url is not None:
+        payload["release_url"] = release_url
+    if tag_url is not None:
+        payload["tag_url"] = tag_url
+    print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def main() -> int:
