@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from bumpkin.analysis import diff_core
+from bumpkin.analysis import diff_core, diff_git
+from bumpkin.analysis import diff_text as diff_text_module
 
 DEFAULT_IGNORES = diff_core.DEFAULT_IGNORES
 PER_FILE_CHAR_CAP = diff_core.PER_FILE_CHAR_CAP
@@ -11,23 +12,23 @@ DiffResult = diff_core.DiffResult
 
 
 def _run_git(args: list[str]) -> str:
-    return diff_core.run_git(args)
+    return diff_git.run_git(args)
 
 
 def _run_command(args: list[str]) -> str:
-    return diff_core.run_command(args)
+    return diff_git.run_command(args)
 
 
 def _latest_tag() -> str | None:
-    return diff_core.latest_tag(run_git_fn=_run_git)
+    return diff_git.latest_tag(run_git_fn=_run_git)
 
 
 def _initial_commit() -> str:
-    return diff_core.initial_commit(run_git_fn=_run_git)
+    return diff_git.initial_commit(run_git_fn=_run_git)
 
 
 def _repository_root() -> str:
-    return diff_core.repository_root(run_git_fn=_run_git)
+    return diff_git.repository_root(run_git_fn=_run_git)
 
 
 def resolve_refs(from_ref: str | None, to_ref: str | None) -> tuple[str, str, list[str]]:
@@ -40,19 +41,19 @@ def resolve_refs(from_ref: str | None, to_ref: str | None) -> tuple[str, str, li
 
 
 def _is_ignored(path: str, patterns: Iterable[str]) -> bool:
-    return diff_core.is_ignored(path, patterns)
+    return diff_text_module.is_ignored(path, patterns)
 
 
 def _changed_files(from_ref: str, to_ref: str) -> list[str]:
-    return diff_core.changed_files(from_ref, to_ref, run_git_fn=_run_git)
+    return diff_text_module.changed_files(from_ref, to_ref, run_git_fn=_run_git)
 
 
 def _normalize_path(path: str) -> str:
-    return diff_core.normalize_path(path)
+    return diff_text_module.normalize_path(path)
 
 
 def _difftastic_available() -> bool:
-    return diff_core.difftastic_available()
+    return diff_text_module.difftastic_available()
 
 
 def _build_diff_text(
@@ -61,7 +62,7 @@ def _build_diff_text(
     files: list[str],
     use_difftastic: bool,
 ) -> tuple[str, list[str]]:
-    return diff_core.build_diff_text(
+    return diff_text_module.build_diff_text(
         from_ref,
         to_ref,
         files,
@@ -73,19 +74,19 @@ def _build_diff_text(
 
 
 def _estimate_tokens(text: str) -> int:
-    return diff_core.estimate_tokens(text)
+    return diff_text_module.estimate_tokens(text)
 
 
 def _cap_diff_per_file(diff_text: str, max_chars_per_file: int) -> tuple[str, int]:
-    return diff_core.cap_diff_per_file(diff_text, max_chars_per_file)
+    return diff_text_module.cap_diff_per_file(diff_text, max_chars_per_file)
 
 
 def _truncate(text: str, token_cap: int) -> tuple[str, bool]:
-    return diff_core.truncate(text, token_cap)
+    return diff_text_module.truncate(text, token_cap)
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
-    return diff_core.dedupe_preserve_order(items)
+    return diff_text_module.dedupe_preserve_order(items)
 
 
 def build_diff(

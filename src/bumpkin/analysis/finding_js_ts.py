@@ -147,244 +147,239 @@ def run_js_ts_export_detection(
     is_requiredness_tightening: RequirednessTightening,
 ) -> list[Finding]:
     file_diffs = finding_diff.parse_diff_files(diff_text)
-    findings: list[Finding] = []
-    counter = 0
-
+    collector = _FindingCollector(build_finding=build_finding)
     for file_diff in file_diffs:
-        if not _is_js_ts_path(file_diff.path):
+        if _is_js_ts_path(file_diff.path):
+            _detect_file_exports(
+                file_diff,
+                collector=collector,
+                normalize_type=normalize_type,
+                is_optional_widening=is_optional_widening,
+                is_requiredness_tightening=is_requiredness_tightening,
+            )
+    return collector.findings
+
+
+@dataclass
+class _FindingCollector:
+    build_finding: BuildFinding
+    findings: list[Finding]
+    counter: int = 0
+
+    def __init__(self, *, build_finding: BuildFinding) -> None:
+        self.build_finding = build_finding
+        self.findings = []
+
+    def add(self, **kwargs: object) -> None:
+        self.counter += 1
+        self.findings.append(self.build_finding(counter=self.counter, **kwargs))
+
+
+def _detect_file_exports(
+    file_diff: finding_diff.FileDiff,
+    *,
+    collector: _FindingCollector,
+    normalize_type: NormalizeType,
+    is_optional_widening: OptionalWidening,
+    is_requiredness_tightening: RequirednessTightening,
+) -> None:
+    start_count = len(collector.findings)
+    removed_exports = _extract_export_names(file_diff.removed_lines)
+    added_exports = _extract_export_names(file_diff.added_lines)
+    removed_signatures = _extract_export_signatures(
+        file_diff.removed_lines, normalize_type=normalize_type
+    )
+    added_signatures = _extract_export_signatures(
+        file_diff.added_lines, normalize_type=normalize_type
+    )
+    removed_only = sorted(removed_exports - added_exports)
+    added_only = sorted(added_exports - removed_exports)
+    rename_pairs = match_export_renames(
+        removed_only=removed_only,
+        added_only=added_only,
+        removed_signatures=removed_signatures,
+        added_signatures=added_signatures,
+    )
+    renamed_removed = {old_name for old_name, _ in rename_pairs}
+    renamed_added = {new_name for _, new_name in rename_pairs}
+    for old_name, new_name in rename_pairs:
+        collector.add(
+            severity="MAJOR",
+            rule="export_symbol_renamed",
+            confidence="high",
+            title=f"Renamed exported symbol: {old_name} -> {new_name}",
+            why="Renaming an exported symbol removes the old public API name and breaks existing imports.",
+            path=file_diff.path,
+            snippet=f"{old_name} -> {new_name}",
+        )
+    removed_only = [symbol for symbol in removed_only if symbol not in renamed_removed]
+    added_only = [symbol for symbol in added_only if symbol not in renamed_added]
+    _add_name_delta_findings(file_diff, collector, removed_only, added_only)
+    shared_exports = sorted(removed_exports & added_exports)
+    _add_signature_findings(
+        file_diff,
+        collector,
+        shared_exports,
+        removed_signatures,
+        added_signatures,
+        is_optional_widening=is_optional_widening,
+        is_requiredness_tightening=is_requiredness_tightening,
+    )
+    if len(collector.findings) == start_count:
+        _add_behavior_fallback(
+            file_diff,
+            collector,
+            shared_exports,
+            removed_signatures,
+            added_signatures,
+        )
+
+
+def _add_name_delta_findings(
+    file_diff: finding_diff.FileDiff,
+    collector: _FindingCollector,
+    removed_only: list[str],
+    added_only: list[str],
+) -> None:
+    if removed_only:
+        collector.add(
+            severity="MAJOR",
+            rule="export_symbol_removed",
+            confidence="high",
+            title=f"Removed exported symbol(s): {', '.join(removed_only[:3])}",
+            why="Removing exported API symbols is a breaking public API change.",
+            path=file_diff.path,
+            snippet=next(
+                (
+                    line
+                    for line in file_diff.removed_lines
+                    if any(symbol in line for symbol in removed_only)
+                ),
+                file_diff.removed_lines[0] if file_diff.removed_lines else "",
+            ),
+        )
+    if added_only:
+        collector.add(
+            severity="MINOR",
+            rule="export_symbol_added",
+            confidence="high",
+            title=f"Added exported symbol(s): {', '.join(added_only[:3])}",
+            why="Adding exported API symbols is a backward-compatible API expansion.",
+            path=file_diff.path,
+            snippet=next(
+                (
+                    line
+                    for line in file_diff.added_lines
+                    if any(symbol in line for symbol in added_only)
+                ),
+                file_diff.added_lines[0] if file_diff.added_lines else "",
+            ),
+        )
+
+
+def _add_signature_findings(
+    file_diff: finding_diff.FileDiff,
+    collector: _FindingCollector,
+    shared_exports: list[str],
+    removed_signatures: Mapping[str, Sequence[JsTsFunctionSignature]],
+    added_signatures: Mapping[str, Sequence[JsTsFunctionSignature]],
+    *,
+    is_optional_widening: OptionalWidening,
+    is_requiredness_tightening: RequirednessTightening,
+) -> None:
+    for symbol in shared_exports:
+        old_sigs = removed_signatures.get(symbol, [])
+        new_sigs = added_signatures.get(symbol, [])
+        if not old_sigs or not new_sigs:
             continue
+        old_signature = old_sigs[0]
+        new_signature = new_sigs[0]
+        if (
+            old_signature.params == new_signature.params
+            and old_signature.return_type == new_signature.return_type
+        ):
+            continue
+        if is_optional_widening(old_signature.params, new_signature.params):
+            collector.add(
+                severity="MINOR",
+                rule="export_signature_optional_widening",
+                confidence="medium",
+                title=f"Backward-compatible signature widening: {symbol}",
+                why="An exported function added only optional parameters, which is backward compatible for existing callers.",
+                path=file_diff.path,
+                snippet=new_signature.source,
+            )
+        elif is_requiredness_tightening(old_signature.params, new_signature.params):
+            collector.add(
+                severity="MAJOR",
+                rule="export_signature_requiredness_tightening",
+                confidence="high",
+                title=f"Breaking signature tightening: {symbol}",
+                why="The exported function signature became stricter, which can break callers.",
+                path=file_diff.path,
+                snippet=new_signature.source,
+            )
+        elif (
+            old_signature.return_type
+            and new_signature.return_type
+            and old_signature.return_type != new_signature.return_type
+        ):
+            collector.add(
+                severity="MAJOR",
+                rule="export_return_type_changed",
+                confidence="medium",
+                title=f"Exported return type changed: {symbol}",
+                why="Changing an exported return type can break downstream consumers expecting the previous contract.",
+                path=file_diff.path,
+                snippet=new_signature.source,
+            )
+        else:
+            collector.add(
+                severity="MAJOR",
+                rule="export_signature_incompatible_change",
+                confidence="medium",
+                title=f"Incompatible exported signature change: {symbol}",
+                why="The exported API signature changed in a way that is not clearly backward compatible.",
+                path=file_diff.path,
+                snippet=new_signature.source,
+            )
 
-        start_count = len(findings)
-        removed_exports = _extract_export_names(file_diff.removed_lines)
-        added_exports = _extract_export_names(file_diff.added_lines)
-        removed_signatures = _extract_export_signatures(
-            file_diff.removed_lines,
-            normalize_type=normalize_type,
+
+def _add_behavior_fallback(
+    file_diff: finding_diff.FileDiff,
+    collector: _FindingCollector,
+    shared_exports: list[str],
+    removed_signatures: Mapping[str, Sequence[JsTsFunctionSignature]],
+    added_signatures: Mapping[str, Sequence[JsTsFunctionSignature]],
+) -> None:
+    if shared_exports and file_diff.touched_export_markers:
+        unchanged = all(
+            removed_signatures.get(symbol)
+            and added_signatures.get(symbol)
+            and removed_signatures[symbol][0].params == added_signatures[symbol][0].params
+            and removed_signatures[symbol][0].return_type == added_signatures[symbol][0].return_type
+            for symbol in shared_exports
         )
-        added_signatures = _extract_export_signatures(
-            file_diff.added_lines,
-            normalize_type=normalize_type,
+        if unchanged:
+            collector.add(
+                severity="PATCH",
+                rule="export_behavior_change_no_signature_delta",
+                confidence="medium",
+                title="Exported behavior changed without API signature change",
+                why="The exported symbol remains present with the same signature, so this is treated as a patch-level behavior change.",
+                path=file_diff.path,
+                snippet=file_diff.added_lines[0] if file_diff.added_lines else "",
+            )
+            return
+    if file_diff.touched_export_markers:
+        collector.add(
+            severity="MANUAL_REVIEW",
+            rule="export_change_unclassified",
+            confidence="low",
+            title="Export change requires manual review",
+            why="Export markers changed but deterministic rules could not infer a safe SemVer classification.",
+            path=file_diff.path,
+            snippet=file_diff.added_lines[0]
+            if file_diff.added_lines
+            else (file_diff.removed_lines[0] if file_diff.removed_lines else "export change"),
         )
-
-        removed_only = sorted(removed_exports - added_exports)
-        added_only = sorted(added_exports - removed_exports)
-        rename_pairs = match_export_renames(
-            removed_only=removed_only,
-            added_only=added_only,
-            removed_signatures=removed_signatures,
-            added_signatures=added_signatures,
-        )
-        renamed_removed = {old_name for old_name, _ in rename_pairs}
-        renamed_added = {new_name for _, new_name in rename_pairs}
-
-        for old_name, new_name in rename_pairs:
-            counter += 1
-            evidence = f"{old_name} -> {new_name}"
-            findings.append(
-                build_finding(
-                    severity="MAJOR",
-                    rule="export_symbol_renamed",
-                    confidence="high",
-                    title=f"Renamed exported symbol: {old_name} -> {new_name}",
-                    why=(
-                        "Renaming an exported symbol removes the old public API name and "
-                        "breaks existing imports."
-                    ),
-                    path=file_diff.path,
-                    snippet=evidence,
-                    counter=counter,
-                )
-            )
-
-        removed_only = [symbol for symbol in removed_only if symbol not in renamed_removed]
-        if removed_only:
-            counter += 1
-            findings.append(
-                build_finding(
-                    severity="MAJOR",
-                    rule="export_symbol_removed",
-                    confidence="high",
-                    title=f"Removed exported symbol(s): {', '.join(removed_only[:3])}",
-                    why="Removing exported API symbols is a breaking public API change.",
-                    path=file_diff.path,
-                    snippet=next(
-                        (
-                            line
-                            for line in file_diff.removed_lines
-                            if any(symbol in line for symbol in removed_only)
-                        ),
-                        file_diff.removed_lines[0] if file_diff.removed_lines else "",
-                    ),
-                    counter=counter,
-                )
-            )
-
-        added_only = [symbol for symbol in added_only if symbol not in renamed_added]
-        if added_only:
-            counter += 1
-            findings.append(
-                build_finding(
-                    severity="MINOR",
-                    rule="export_symbol_added",
-                    confidence="high",
-                    title=f"Added exported symbol(s): {', '.join(added_only[:3])}",
-                    why="Adding exported API symbols is a backward-compatible API expansion.",
-                    path=file_diff.path,
-                    snippet=next(
-                        (
-                            line
-                            for line in file_diff.added_lines
-                            if any(symbol in line for symbol in added_only)
-                        ),
-                        file_diff.added_lines[0] if file_diff.added_lines else "",
-                    ),
-                    counter=counter,
-                )
-            )
-
-        shared_exports = sorted(removed_exports & added_exports)
-
-        for symbol in shared_exports:
-            old_sigs = removed_signatures.get(symbol, [])
-            new_sigs = added_signatures.get(symbol, [])
-            if not old_sigs or not new_sigs:
-                continue
-
-            old_params = old_sigs[0].params
-            new_params = new_sigs[0].params
-            old_return = old_sigs[0].return_type
-            new_return = new_sigs[0].return_type
-
-            if old_params == new_params and old_return == new_return:
-                continue
-
-            if is_optional_widening(old_params, new_params):
-                counter += 1
-                findings.append(
-                    build_finding(
-                        severity="MINOR",
-                        rule="export_signature_optional_widening",
-                        confidence="medium",
-                        title=f"Backward-compatible signature widening: {symbol}",
-                        why=(
-                            "An exported function added only optional parameters, which is "
-                            "backward compatible for existing callers."
-                        ),
-                        path=file_diff.path,
-                        snippet=new_sigs[0].source,
-                        counter=counter,
-                    )
-                )
-                continue
-
-            if is_requiredness_tightening(old_params, new_params):
-                counter += 1
-                findings.append(
-                    build_finding(
-                        severity="MAJOR",
-                        rule="export_signature_requiredness_tightening",
-                        confidence="high",
-                        title=f"Breaking signature tightening: {symbol}",
-                        why=(
-                            "The exported function signature became stricter "
-                            "(removed/required parameter changes), which can break callers."
-                        ),
-                        path=file_diff.path,
-                        snippet=new_sigs[0].source,
-                        counter=counter,
-                    )
-                )
-                continue
-
-            if old_return and new_return and old_return != new_return:
-                counter += 1
-                findings.append(
-                    build_finding(
-                        severity="MAJOR",
-                        rule="export_return_type_changed",
-                        confidence="medium",
-                        title=f"Exported return type changed: {symbol}",
-                        why=(
-                            "Changing an exported return type can break downstream consumers "
-                            "expecting the previous contract."
-                        ),
-                        path=file_diff.path,
-                        snippet=new_sigs[0].source,
-                        counter=counter,
-                    )
-                )
-                continue
-
-            counter += 1
-            findings.append(
-                build_finding(
-                    severity="MAJOR",
-                    rule="export_signature_incompatible_change",
-                    confidence="medium",
-                    title=f"Incompatible exported signature change: {symbol}",
-                    why=(
-                        "The exported API signature changed in a way that is not clearly "
-                        "backward compatible."
-                    ),
-                    path=file_diff.path,
-                    snippet=new_sigs[0].source,
-                    counter=counter,
-                )
-            )
-
-        if len(findings) == start_count and file_diff.touched_export_markers and shared_exports:
-            unchanged_shared_signatures = True
-            for symbol in shared_exports:
-                old_sigs = removed_signatures.get(symbol, [])
-                new_sigs = added_signatures.get(symbol, [])
-                if not old_sigs or not new_sigs:
-                    unchanged_shared_signatures = False
-                    break
-                if old_sigs[0].params != new_sigs[0].params:
-                    unchanged_shared_signatures = False
-                    break
-                if old_sigs[0].return_type != new_sigs[0].return_type:
-                    unchanged_shared_signatures = False
-                    break
-            if unchanged_shared_signatures:
-                counter += 1
-                findings.append(
-                    build_finding(
-                        severity="PATCH",
-                        rule="export_behavior_change_no_signature_delta",
-                        confidence="medium",
-                        title="Exported behavior changed without API signature change",
-                        why=(
-                            "The exported symbol remains present with the same signature, "
-                            "so this is treated as a patch-level behavior change."
-                        ),
-                        path=file_diff.path,
-                        snippet=file_diff.added_lines[0] if file_diff.added_lines else "",
-                        counter=counter,
-                    )
-                )
-
-        if len(findings) == start_count and file_diff.touched_export_markers:
-            counter += 1
-            snippet = (
-                file_diff.added_lines[0]
-                if file_diff.added_lines
-                else (file_diff.removed_lines[0] if file_diff.removed_lines else "export change")
-            )
-            findings.append(
-                build_finding(
-                    severity="MANUAL_REVIEW",
-                    rule="export_change_unclassified",
-                    confidence="low",
-                    title="Export change requires manual review",
-                    why=(
-                        "Export markers changed but deterministic rules could not infer a "
-                        "safe SemVer classification."
-                    ),
-                    path=file_diff.path,
-                    snippet=snippet,
-                    counter=counter,
-                )
-            )
-
-    return findings
