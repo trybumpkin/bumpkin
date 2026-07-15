@@ -35,7 +35,7 @@ It is built for teams that want release automation without depending on perfect 
 
 Install Bumpkin as a GitHub Action directly from this repository:
 
-- `uses: trybumpkin/bumpkin@v1`
+- `uses: trybumpkin/bumpkin@v2`
 
 Before you run it:
 
@@ -104,7 +104,7 @@ jobs:
           fetch-depth: 0
 
       - id: bumpkin
-        uses: trybumpkin/bumpkin@v1
+        uses: trybumpkin/bumpkin@v2
         with:
           operation: ${{ inputs.operation }}
           base_tag: ${{ inputs.base_tag }}
