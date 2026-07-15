@@ -47,35 +47,43 @@ def run_git(args: list[str]) -> str:
     return proc.stdout.strip()
 
 
+def _resolve_merge_parent_from_git(candidate: str) -> str | None:
+    try:
+        return run_git(["rev-parse", f"{candidate}^1"])
+    except RuntimeError:
+        return None
+
+
+def _resolve_merge_parent_from_github(candidate: str) -> str | None:
+    repository = os.getenv("GITHUB_REPOSITORY", "").strip()
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if not repository or not token:
+        return None
+    url = f"https://api.github.com/repos/{repository}/commits/{candidate}"
+    try:
+        payload = github_api_request(token, url)
+    except RuntimeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload_map = cast("dict[str, object]", payload)
+    parents = payload_map.get("parents")
+    if not isinstance(parents, list) or not parents:
+        return None
+    parents_list = cast("list[object]", parents)
+    first_parent = parents_list[0]
+    if not isinstance(first_parent, dict):
+        return None
+    first_parent_map = cast("dict[str, object]", first_parent)
+    parent_sha = str(first_parent_map.get("sha", "")).strip()
+    return parent_sha or None
+
+
 def resolve_merge_parent_sha(merge_sha: str) -> str | None:
     candidate = merge_sha.strip()
     if not candidate:
         return None
-    try:
-        return run_git(["rev-parse", f"{candidate}^1"])
-    except RuntimeError:
-        repository = os.getenv("GITHUB_REPOSITORY", "").strip()
-        token = os.getenv("GITHUB_TOKEN", "").strip()
-        if not repository or not token:
-            return None
-        url = f"https://api.github.com/repos/{repository}/commits/{candidate}"
-        try:
-            payload = github_api_request(token, url)
-        except RuntimeError:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        payload_map = cast("dict[str, object]", payload)
-        parents = payload_map.get("parents")
-        if not isinstance(parents, list) or not parents:
-            return None
-        parents_list = cast("list[object]", parents)
-        first_parent = parents_list[0]
-        if not isinstance(first_parent, dict):
-            return None
-        first_parent_map = cast("dict[str, object]", first_parent)
-        parent_sha = str(first_parent_map.get("sha", "")).strip()
-        return parent_sha or None
+    return _resolve_merge_parent_from_git(candidate) or _resolve_merge_parent_from_github(candidate)
 
 
 def read_event_context(event_path: str | None) -> PREventContext:

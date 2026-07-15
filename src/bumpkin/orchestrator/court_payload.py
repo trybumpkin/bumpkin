@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any, cast
 
+from bumpkin.json_recovery import iter_json_object_slices as _iter_json_object_slices
+
 VALID_LABELS = {"MAJOR", "MINOR", "PATCH", "NO_BUMP"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
@@ -92,38 +94,6 @@ def _extract_content(response_payload: dict[str, Any]) -> str:
             if isinstance(arguments, str) and arguments.strip():
                 return arguments.strip()
     raise RuntimeError("Missing message.content in model response.")
-
-
-def _iter_json_object_slices(text: str) -> list[str]:
-    candidates: list[str] = []
-    for start in (idx for idx, ch in enumerate(text) if ch == "{"):
-        depth = 0
-        in_string = False
-        escaped = False
-        for idx in range(start, len(text)):
-            ch = text[idx]
-            if in_string:
-                if escaped:
-                    escaped = False
-                    continue
-                if ch == "\\":
-                    escaped = True
-                    continue
-                if ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-                continue
-            if ch == "{":
-                depth += 1
-                continue
-            if ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(text[start : idx + 1])
-                    break
-    return candidates
 
 
 def _infer_label_from_text(content: str) -> str | None:

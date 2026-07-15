@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.findings import Finding, aggregate_findings
@@ -11,7 +12,7 @@ from bumpkin.providers.semantic import semantic_fallback_recommendation
 
 @dataclass(frozen=True)
 class BaseClassificationArtifacts:
-    result: dict[str, object]
+    result: dict[str, Any]
     aggregation_trace: str | None
     fallback_reason: str | None
     mode_used: str

@@ -21,12 +21,11 @@ from bumpkin.orchestrator.court_payload import (
 from bumpkin.orchestrator.court_payload import (
     validate_court_payload as _validate_court_payload,
 )
-from bumpkin.retry import (
+from bumpkin.request_pacing import (
     apply_model_call_interval,
-    compute_retry_delay,
-    is_retryable_http_code,
     register_rate_limit_cooldown,
 )
+from bumpkin.retry import compute_retry_delay, is_retryable_http_code
 
 DEFAULT_MAX_OUTPUT_TOKENS = 400
 REPAIR_MAX_OUTPUT_TOKENS = 260
