@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          MODELS_TOKEN="" GITHUB_MODELS_TOKEN="" GITHUB_TOKEN="" \
+          BUMPKIN_API_KEY="" GITHUB_TOKEN="" \
             PYTHONPATH=src python src/eval.py \
               --mode auto \
               --language-group javascript-typescript \
@@ -123,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          MODELS_TOKEN="" GITHUB_MODELS_TOKEN="" GITHUB_TOKEN="" \
+          BUMPKIN_API_KEY="" GITHUB_TOKEN="" \
             PYTHONPATH=src python src/eval.py \
               --mode auto \
               --language-group "${{ matrix.language_group }}" \
@@ -158,10 +158,9 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - id: token-check
         env:
-          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          BUMPKIN_API_KEY: ${{ secrets.BUMPKIN_API_KEY }}
         run: |
-          if [ -n "${GITHUB_MODELS_TOKEN}" ] || [ -n "${MODELS_TOKEN}" ]; then
+          if [ -n "${BUMPKIN_API_KEY}" ]; then
             echo "has_token=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
@@ -169,11 +168,10 @@ jobs:
       - id: run-preflight
         if: steps.token-check.outputs.has_token == 'true'
         env:
-          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          BUMPKIN_API_KEY: ${{ secrets.BUMPKIN_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           BUMPKIN_PROVIDER: auto
-          BUMPKIN_MODELS_ENDPOINT: ${{ secrets.BUMPKIN_MODELS_ENDPOINT || vars.BUMPKIN_MODELS_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
+          BUMPKIN_ENDPOINT: ${{ secrets.BUMPKIN_ENDPOINT || vars.BUMPKIN_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
           BUMPKIN_MODEL: ${{ secrets.BUMPKIN_MODEL || vars.BUMPKIN_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
         run: |
           mkdir -p artifacts
@@ -222,11 +220,10 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: "Run model canary eval (4 fixtures: major/minor/low-confidence/no-bump-noise)"
         env:
-          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          BUMPKIN_API_KEY: ${{ secrets.BUMPKIN_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           BUMPKIN_PROVIDER: auto
-          BUMPKIN_MODELS_ENDPOINT: ${{ secrets.BUMPKIN_MODELS_ENDPOINT || vars.BUMPKIN_MODELS_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
+          BUMPKIN_ENDPOINT: ${{ secrets.BUMPKIN_ENDPOINT || vars.BUMPKIN_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
           BUMPKIN_MODEL: ${{ secrets.BUMPKIN_MODEL || vars.BUMPKIN_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
           BUMPKIN_EVAL_CASE_DELAY_MS: 4000
           BUMPKIN_MODEL_CALL_MIN_INTERVAL_MS: 4000
@@ -321,11 +318,10 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
       - env:
-          MODELS_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          BUMPKIN_API_KEY: ${{ secrets.BUMPKIN_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           BUMPKIN_PROVIDER: auto
-          BUMPKIN_MODELS_ENDPOINT: ${{ secrets.BUMPKIN_MODELS_ENDPOINT || vars.BUMPKIN_MODELS_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
+          BUMPKIN_ENDPOINT: ${{ secrets.BUMPKIN_ENDPOINT || vars.BUMPKIN_ENDPOINT || 'https://openrouter.ai/api/v1/chat/completions' }}
           BUMPKIN_MODEL: ${{ secrets.BUMPKIN_MODEL || vars.BUMPKIN_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' }}
           BUMPKIN_EVAL_CASE_DELAY_MS: 4000
           BUMPKIN_MODEL_CALL_MIN_INTERVAL_MS: 4000

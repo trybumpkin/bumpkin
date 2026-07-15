@@ -53,8 +53,8 @@ jobs:
           preview_run_id: ${{ inputs.preview_run_id }}
           model: ${{ secrets.BUMPKIN_MODEL }}
           fallback_model: ${{ secrets.BUMPKIN_FALLBACK_MODEL || '' }}
-          models_endpoint: ${{ secrets.BUMPKIN_MODELS_ENDPOINT }}
-          models_token: ${{ secrets.MODELS_TOKEN }}
+          endpoint: ${{ secrets.BUMPKIN_ENDPOINT }}
+          api_key: ${{ secrets.BUMPKIN_API_KEY }}
           request_timeout: "45"
           model_call_min_interval_ms: "4000"
 

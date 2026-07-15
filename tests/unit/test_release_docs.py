@@ -18,9 +18,9 @@ def test_readme_frames_release_scoped_flow_as_primary_story() -> None:
     assert "release_publish" in readme
     assert "preview_run_id" in readme
     assert "actions: read" in readme
-    assert "MODELS_TOKEN" in readme
+    assert "BUMPKIN_API_KEY" in readme
     assert "BUMPKIN_MODEL" in readme
-    assert "BUMPKIN_MODELS_ENDPOINT" in readme
+    assert "BUMPKIN_ENDPOINT" in readme
     assert "uses: trybumpkin/bumpkin@v1" in readme
     assert "maintainer briefing" in readme
     assert "precomputed public changelog" in readme
@@ -52,9 +52,7 @@ def test_env_example_marks_app_runtime_as_optional() -> None:
 
     assert "BUMPKIN_MODEL=your_model_name_here" in env_example
     assert "BUMPKIN_FALLBACK_MODEL=" in env_example
-    assert (
-        "BUMPKIN_MODELS_ENDPOINT=https://your-provider.example/v1/chat/completions" in env_example
-    )
+    assert "BUMPKIN_ENDPOINT=https://your-provider.example/v1/chat/completions" in env_example
     assert "BUMPKIN_APP_MODE=shell" not in env_example
 
 

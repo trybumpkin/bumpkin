@@ -465,11 +465,9 @@ def main() -> int:
     if not str(args.model or "").strip():
         raise ValueError("BUMPKIN_MODEL or --model is required.")
     if not str(args.models_endpoint or "").strip():
-        raise ValueError("BUMPKIN_MODELS_ENDPOINT or --models-endpoint is required.")
+        raise ValueError("BUMPKIN_ENDPOINT or --models-endpoint is required.")
     if not is_valid_models_endpoint(str(args.models_endpoint)):
-        raise ValueError(
-            "BUMPKIN_MODELS_ENDPOINT or --models-endpoint must be a valid http(s) URL."
-        )
+        raise ValueError("BUMPKIN_ENDPOINT or --models-endpoint must be a valid http(s) URL.")
     from bumpkin.orchestrator import pipeline as orchestrator_pipeline
 
     return orchestrator_pipeline.run(args)

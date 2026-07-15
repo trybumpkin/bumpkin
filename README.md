@@ -40,9 +40,9 @@ Install Bumpkin as a GitHub Action directly from this repository:
 Before you run it:
 
 - Add these repository secrets:
-  - `MODELS_TOKEN`
+  - `BUMPKIN_API_KEY`
   - `BUMPKIN_MODEL`
-  - `BUMPKIN_MODELS_ENDPOINT`
+  - `BUMPKIN_ENDPOINT`
 - Give the workflow:
   - `actions: read`
   - `contents: write`
@@ -51,14 +51,14 @@ Before you run it:
 Example secret values:
 
 ```text
-MODELS_TOKEN=your_provider_token
+BUMPKIN_API_KEY=your_provider_api_key
 BUMPKIN_MODEL=gemini-2.5-flash
-BUMPKIN_MODELS_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/
+BUMPKIN_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 
 ## First run checklist
 
-- Add `MODELS_TOKEN`, `BUMPKIN_MODEL`, and `BUMPKIN_MODELS_ENDPOINT`
+- Add `BUMPKIN_API_KEY`, `BUMPKIN_MODEL`, and `BUMPKIN_ENDPOINT`
 - Keep `actions: read`, `contents: write`, and `pull-requests: read`
 - Run `release_preview` first
 - Review the maintainer briefing, candidate artifact, and summary
@@ -111,8 +111,8 @@ jobs:
           preview_run_id: ${{ inputs.preview_run_id }}
           model: ${{ secrets.BUMPKIN_MODEL }}
           fallback_model: ${{ secrets.BUMPKIN_FALLBACK_MODEL || '' }}
-          models_endpoint: ${{ secrets.BUMPKIN_MODELS_ENDPOINT }}
-          models_token: ${{ secrets.MODELS_TOKEN }}
+          endpoint: ${{ secrets.BUMPKIN_ENDPOINT }}
+          api_key: ${{ secrets.BUMPKIN_API_KEY }}
           request_timeout: "45"
           model_call_min_interval_ms: "4000"
 
