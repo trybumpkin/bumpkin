@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any, cast
 
+from bumpkin.json_recovery import iter_json_object_slices
+
 VALID_LABELS = {"MAJOR", "MINOR", "PATCH", "NO_BUMP"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 AGGREGATE_CHANGELOG = {
@@ -12,6 +14,10 @@ AGGREGATE_CHANGELOG = {
     "PATCH": "fix: internal implementation update",
     "NO_BUMP": "chore: no release required",
 }
+LABEL_KEYS = ("label", "version_bump", "bump", "recommendation")
+CONFIDENCE_KEYS = ("confidence", "certainty")
+REASONING_KEYS = ("reasoning", "rationale", "reason", "explanation")
+CHANGELOG_KEYS = ("changelog", "commit_message", "conventional_commit")
 CHANGELOG_PATTERN = re.compile(
     r"^(feat|fix|chore|refactor|perf|docs|build|ci|test|style)(\([^)]+\))?(!)?:\s+\S"
 )
@@ -19,6 +25,14 @@ CHANGELOG_PATTERN = re.compile(
 
 class LLMResponseError(RuntimeError):
     pass
+
+
+def _first_present(payload: dict[str, Any], keys: tuple[str, ...]) -> object | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return value
+    return None
 
 
 def _as_dict(value: object) -> dict[str, Any] | None:
@@ -31,6 +45,42 @@ def _as_object_list(value: object) -> list[object] | None:
     if not isinstance(value, list):
         return None
     return cast("list[object]", value)
+
+
+def _repair_unclosed_object(text: str) -> str | None:
+    start_idx: int | None = None
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for idx, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if start_idx is None:
+                start_idx = idx
+            depth += 1
+            continue
+        if ch == "}" and depth > 0:
+            depth -= 1
+
+    if start_idx is None or depth == 0:
+        return None
+
+    candidate = text[start_idx:].strip()
+    return candidate + ("}" * depth)
 
 
 def normalize_label(value: Any) -> str | None:
@@ -104,28 +154,10 @@ def coerce_recommendation_payload(payload: object) -> dict[str, Any]:
     if payload_dict is None:
         return {}
 
-    label = normalize_label(
-        payload_dict.get("label")
-        or payload_dict.get("version_bump")
-        or payload_dict.get("bump")
-        or payload_dict.get("recommendation")
-    )
-    confidence = normalize_confidence(
-        payload_dict.get("confidence") or payload_dict.get("certainty")
-    )
-    reasoning = str(
-        payload_dict.get("reasoning")
-        or payload_dict.get("rationale")
-        or payload_dict.get("reason")
-        or payload_dict.get("explanation")
-        or ""
-    ).strip()
-    changelog = str(
-        payload_dict.get("changelog")
-        or payload_dict.get("commit_message")
-        or payload_dict.get("conventional_commit")
-        or ""
-    ).strip()
+    label = normalize_label(_first_present(payload_dict, LABEL_KEYS))
+    confidence = normalize_confidence(_first_present(payload_dict, CONFIDENCE_KEYS))
+    reasoning = str(_first_present(payload_dict, REASONING_KEYS) or "").strip()
+    changelog = str(_first_present(payload_dict, CHANGELOG_KEYS) or "").strip()
 
     if label and not changelog:
         changelog = AGGREGATE_CHANGELOG.get(label, "chore: no release required")
@@ -212,11 +244,19 @@ def extract_json_payload(content: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
+    for candidate in iter_json_object_slices(text):
         try:
-            parsed = json.loads(text[start : end + 1])
+            parsed = json.loads(candidate)
+            parsed_dict = _as_dict(parsed)
+            if parsed_dict is not None:
+                return parsed_dict
+        except json.JSONDecodeError:
+            pass
+
+    repaired = _repair_unclosed_object(text)
+    if repaired is not None:
+        try:
+            parsed = json.loads(repaired)
             parsed_dict = _as_dict(parsed)
             if parsed_dict is not None:
                 return parsed_dict

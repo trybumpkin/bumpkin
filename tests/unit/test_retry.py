@@ -3,6 +3,7 @@ from email.utils import format_datetime
 
 import pytest
 
+from bumpkin import request_pacing as pacing_module
 from bumpkin import retry as retry_module
 
 
@@ -51,14 +52,14 @@ def test_compute_retry_delay_respects_max_delay_cap() -> None:
 def test_apply_model_call_interval_honors_zero_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry_module.reset_model_request_interval()
+    pacing_module.reset_model_request_interval()
     slept: list[float] = []
 
     def _record_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(retry_module.time, "sleep", _record_sleep)
-    delay = retry_module.apply_model_call_interval(interval_ms=0)
+    monkeypatch.setattr(pacing_module.time, "sleep", _record_sleep)
+    delay = pacing_module.apply_model_call_interval(interval_ms=0)
     assert delay == 0.0
     assert slept == []
 
@@ -66,7 +67,7 @@ def test_apply_model_call_interval_honors_zero_by_default(
 def test_apply_model_call_interval_reads_min_ms_and_applies_gap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry_module.reset_model_request_interval()
+    pacing_module.reset_model_request_interval()
     slept: list[float] = []
     clock_ticks = [0.0, 0.5, 0.5, 2.0, 2.0]
 
@@ -76,19 +77,19 @@ def test_apply_model_call_interval_reads_min_ms_and_applies_gap(
     def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(retry_module.time, "sleep", fake_sleep)
-    monkeypatch.setattr(retry_module.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(pacing_module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(pacing_module.time, "perf_counter", fake_perf_counter)
 
-    assert retry_module.apply_model_call_interval(interval_ms=1000) == 0.0
-    assert retry_module.apply_model_call_interval(interval_ms=1000) == 0.5
-    assert retry_module.apply_model_call_interval(interval_ms=1000) == 0.0
+    assert pacing_module.apply_model_call_interval(interval_ms=1000) == 0.0
+    assert pacing_module.apply_model_call_interval(interval_ms=1000) == 0.5
+    assert pacing_module.apply_model_call_interval(interval_ms=1000) == 0.0
     assert slept == [0.5]
 
 
 def test_apply_model_call_interval_uses_default_env_when_interval_omitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry_module.reset_model_request_interval()
+    pacing_module.reset_model_request_interval()
     monkeypatch.delenv("BUMPKIN_MODEL_CALL_MIN_INTERVAL_MS", raising=False)
 
     slept: list[float] = []
@@ -100,18 +101,18 @@ def test_apply_model_call_interval_uses_default_env_when_interval_omitted(
     def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(retry_module.time, "sleep", fake_sleep)
-    monkeypatch.setattr(retry_module.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(pacing_module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(pacing_module.time, "perf_counter", fake_perf_counter)
 
-    assert retry_module.apply_model_call_interval() == 0.0
-    assert retry_module.apply_model_call_interval() == 3.0
+    assert pacing_module.apply_model_call_interval() == 0.0
+    assert pacing_module.apply_model_call_interval() == 3.0
     assert slept == [3.0]
 
 
 def test_register_rate_limit_cooldown_is_applied_to_next_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retry_module.reset_model_request_interval()
+    pacing_module.reset_model_request_interval()
 
     slept: list[float] = []
     clock_ticks = [10.0, 10.0, 70.0]
@@ -122,13 +123,13 @@ def test_register_rate_limit_cooldown_is_applied_to_next_model_call(
     def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(retry_module.time, "sleep", fake_sleep)
-    monkeypatch.setattr(retry_module.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(pacing_module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(pacing_module.time, "perf_counter", fake_perf_counter)
 
-    cooldown = retry_module.register_rate_limit_cooldown(
+    cooldown = pacing_module.register_rate_limit_cooldown(
         headers={"Retry-After": "5"},
         minimum_seconds=60.0,
     )
     assert cooldown == 60.0
-    assert retry_module.apply_model_call_interval(interval_ms=0) == 60.0
+    assert pacing_module.apply_model_call_interval(interval_ms=0) == 60.0
     assert slept == [60.0]
