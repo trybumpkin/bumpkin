@@ -52,9 +52,7 @@ def test_env_example_marks_app_runtime_as_optional() -> None:
 
     assert "BUMPKIN_MODEL=your_model_name_here" in env_example
     assert "BUMPKIN_FALLBACK_MODEL=" in env_example
-    assert (
-        "BUMPKIN_ENDPOINT=https://your-provider.example/v1/chat/completions" in env_example
-    )
+    assert "BUMPKIN_ENDPOINT=https://your-provider.example/v1/chat/completions" in env_example
     assert "BUMPKIN_APP_MODE=shell" not in env_example
 
 
