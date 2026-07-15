@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ""
   api_key:
-    description: "Legacy input. Prefer models_token."
+    description: "API key for the configured model provider."
     required: false
     default: ""
   target_ref:
@@ -53,11 +53,17 @@ inputs:
     required: false
     default: ""
   models_endpoint:
+    description: "Deprecated alias for endpoint."
+    required: false
+    default: ""
+  endpoint:
     description: "Chat completions endpoint for the configured model provider."
-    required: true
+    required: false
+    default: ""
   models_token:
-    description: "API token for the configured model provider."
-    required: true
+    description: "Deprecated alias for api_key."
+    required: false
+    default: ""
   token_cap:
     description: "Approximate token cap for diff payload."
     required: false
@@ -130,14 +136,13 @@ runs:
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ inputs.api_key }}
-        MODELS_TOKEN: ${{ inputs.models_token }}
-        GITHUB_MODELS_TOKEN: ${{ inputs.models_token }}
+        BUMPKIN_API_KEY: ${{ inputs.api_key || inputs.models_token }}
         GITHUB_TOKEN: ${{ github.token }}
         PYTHONPATH: ${{ github.action_path }}/src
         BUMPKIN_PROVIDER: ${{ inputs.provider }}
         BUMPKIN_MODEL: ${{ inputs.model }}
         BUMPKIN_FALLBACK_MODEL: ${{ inputs.fallback_model }}
-        BUMPKIN_MODELS_ENDPOINT: ${{ inputs.models_endpoint }}
+        BUMPKIN_ENDPOINT: ${{ inputs.endpoint || inputs.models_endpoint }}
         BUMPKIN_MODEL_CALL_MIN_INTERVAL_MS: ${{ inputs.model_call_min_interval_ms }}
         BUMPKIN_USE_DIFFTASTIC: ${{ inputs.use_difftastic }}
         BUMPKIN_REQUEST_TIMEOUT: ${{ inputs.request_timeout }}
@@ -153,13 +158,13 @@ runs:
           fi
         }
 
-        require_bumpkin_input "MODELS_TOKEN" "${MODELS_TOKEN:-}"
+        require_bumpkin_input "BUMPKIN_API_KEY" "${BUMPKIN_API_KEY:-}"
         require_bumpkin_input "BUMPKIN_MODEL" "${BUMPKIN_MODEL:-}"
-        require_bumpkin_input "BUMPKIN_MODELS_ENDPOINT" "${BUMPKIN_MODELS_ENDPOINT:-}"
-        case "${BUMPKIN_MODELS_ENDPOINT}" in
+        require_bumpkin_input "BUMPKIN_ENDPOINT" "${BUMPKIN_ENDPOINT:-}"
+        case "${BUMPKIN_ENDPOINT}" in
           http://*|https://*) ;;
           *)
-            echo "::error title=Invalid Bumpkin configuration::BUMPKIN_MODELS_ENDPOINT must be a valid http(s) URL." >&2
+            echo "::error title=Invalid Bumpkin configuration::BUMPKIN_ENDPOINT must be a valid http(s) URL." >&2
             exit 1
             ;;
         esac

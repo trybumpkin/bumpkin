@@ -24,8 +24,10 @@ def test_composite_action_exposes_release_operations_and_outputs() -> None:
     assert "candidate_output" in inputs
     assert "preview_run_id" in inputs
     assert inputs["model"]["required"] is True
-    assert inputs["models_endpoint"]["required"] is True
-    assert inputs["models_token"]["required"] is True
+    assert inputs["endpoint"]["required"] is False
+    assert inputs["api_key"]["required"] is False
+    assert "Deprecated alias" in inputs["models_endpoint"]["description"]
+    assert "Deprecated alias" in inputs["models_token"]["description"]
 
     outputs = action["outputs"]
     assert "release_status" in outputs
@@ -67,8 +69,8 @@ def test_source_repo_release_workflow_uses_local_action() -> None:
     assert bumpkin_step["with"]["operation"] == "${{ inputs.operation }}"
     assert bumpkin_step["with"]["preview_run_id"] == "${{ inputs.preview_run_id }}"
     assert bumpkin_step["with"]["model"] == "${{ secrets.BUMPKIN_MODEL }}"
-    assert bumpkin_step["with"]["models_endpoint"] == "${{ secrets.BUMPKIN_MODELS_ENDPOINT }}"
-    assert bumpkin_step["with"]["models_token"] == "${{ secrets.MODELS_TOKEN }}"  # noqa: S105
+    assert bumpkin_step["with"]["endpoint"] == "${{ secrets.BUMPKIN_ENDPOINT }}"
+    assert bumpkin_step["with"]["api_key"] == "${{ secrets.BUMPKIN_API_KEY }}"  # noqa: S105
     assert "provider" not in bumpkin_step["with"]
     assert any(step.get("name") == "Upload release candidate artifact" for step in steps)
     assert not any(step.get("name") == "Validate preview output" for step in steps)

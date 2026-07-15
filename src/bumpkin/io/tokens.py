@@ -31,7 +31,8 @@ def is_valid_models_endpoint(endpoint: str | None) -> bool:
 
 def resolve_models_endpoint() -> str:
     explicit = (
-        os.getenv("BUMPKIN_MODELS_ENDPOINT")
+        os.getenv("BUMPKIN_ENDPOINT")
+        or os.getenv("BUMPKIN_MODELS_ENDPOINT")
         or os.getenv("GITHUB_MODELS_ENDPOINT")
         or os.getenv("OPENROUTER_ENDPOINT")
     )
@@ -42,6 +43,10 @@ def resolve_models_endpoint() -> str:
 
 def resolve_models_token(*, endpoint: str | None = None) -> str:
     normalized_endpoint = endpoint or resolve_models_endpoint()
+    api_key = os.getenv("BUMPKIN_API_KEY")
+    if api_key and api_key.strip():
+        return api_key.strip()
+
     if is_openrouter_endpoint(normalized_endpoint):
         return (
             os.getenv("OPENROUTER_API")
