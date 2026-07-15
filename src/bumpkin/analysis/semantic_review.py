@@ -251,26 +251,9 @@ def detect_contradictions(
     status: str,
     final_label: str | None,
 ) -> list[dict[str, Any]]:
-    normalized_labels = {str(label).strip().lower() for label in event_labels if str(label).strip()}
-    fix_intent = any(
-        token in label for label in normalized_labels for token in ("bump:patch", "fix", "bug")
-    )
-    no_bump_intent = any(
-        label in {"bump:no-bump", "bump:no_bump", "no-bump", "no_bump", "release:none"}
-        for label in normalized_labels
-    )
-    runtime_rows = [
-        row
-        for row in semantic_facts
-        if str(row.get("impact_scope", "")).strip().lower() != "non_runtime"
-        and str(row.get("action", "")).strip().lower() != "unchanged"
-    ]
-    public_change_rows = [
-        row
-        for row in semantic_facts
-        if str(row.get("impact_scope", "")).strip().lower() == "public_api"
-        and str(row.get("suggested_bump", "")).strip().upper() in {"MAJOR", "MINOR"}
-    ]
+    fix_intent, no_bump_intent = _event_intent_flags(event_labels)
+    runtime_rows = _runtime_semantic_rows(semantic_facts)
+    public_change_rows = _public_change_rows(semantic_facts)
     contradictions: list[dict[str, Any]] = []
 
     if (
@@ -286,13 +269,7 @@ def detect_contradictions(
                     "additions or breaking changes."
                 ),
                 "severity": "high",
-                "evidence_paths": sorted(
-                    {
-                        str(item.get("path", "")).strip()
-                        for item in public_change_rows
-                        if str(item.get("path", "")).strip()
-                    }
-                ),
+                "evidence_paths": _semantic_paths(public_change_rows),
             }
         )
 
@@ -302,13 +279,7 @@ def detect_contradictions(
                 "code": "intent_no_bump_vs_runtime_delta",
                 "message": "PR intent indicates NO_BUMP, but runtime semantic deltas were detected.",
                 "severity": "high",
-                "evidence_paths": sorted(
-                    {
-                        str(item.get("path", "")).strip()
-                        for item in runtime_rows
-                        if str(item.get("path", "")).strip()
-                    }
-                ),
+                "evidence_paths": _semantic_paths(runtime_rows),
             }
         )
 
@@ -322,13 +293,7 @@ def detect_contradictions(
                 "code": "classified_no_bump_vs_runtime_delta",
                 "message": "NO_BUMP classification conflicts with runtime semantic deltas.",
                 "severity": "high",
-                "evidence_paths": sorted(
-                    {
-                        str(item.get("path", "")).strip()
-                        for item in runtime_rows
-                        if str(item.get("path", "")).strip()
-                    }
-                ),
+                "evidence_paths": _semantic_paths(runtime_rows),
             }
         )
 
@@ -341,6 +306,39 @@ def detect_contradictions(
         seen_codes.add(code)
         deduped.append(item)
     return deduped
+
+
+def _event_intent_flags(event_labels: list[str]) -> tuple[bool, bool]:
+    labels = {str(label).strip().lower() for label in event_labels if str(label).strip()}
+    fix_intent = any(token in label for label in labels for token in ("bump:patch", "fix", "bug"))
+    no_bump_intent = bool(
+        labels & {"bump:no-bump", "bump:no_bump", "no-bump", "no_bump", "release:none"}
+    )
+    return fix_intent, no_bump_intent
+
+
+def _runtime_semantic_rows(semantic_facts: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        row
+        for row in semantic_facts
+        if str(row.get("impact_scope", "")).strip().lower() != "non_runtime"
+        and str(row.get("action", "")).strip().lower() != "unchanged"
+    ]
+
+
+def _public_change_rows(semantic_facts: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        row
+        for row in semantic_facts
+        if str(row.get("impact_scope", "")).strip().lower() == "public_api"
+        and str(row.get("suggested_bump", "")).strip().upper() in {"MAJOR", "MINOR"}
+    ]
+
+
+def _semantic_paths(rows: list[dict[str, str]]) -> list[str]:
+    return sorted(
+        {str(item.get("path", "")).strip() for item in rows if str(item.get("path", "")).strip()}
+    )
 
 
 __all__ = [
