@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from bumpkin.analysis.diffing import DiffResult
 from bumpkin.analysis.findings import Finding, aggregate_findings
@@ -14,7 +15,7 @@ from bumpkin.policies import guards as guard_policies
 
 @dataclass(frozen=True)
 class AnalysisStageArtifacts:
-    result: dict[str, object]
+    result: dict[str, Any]
     aggregation_trace: str | None
     boundary_summary: dict[str, int]
     evidence_summary: dict[str, int]

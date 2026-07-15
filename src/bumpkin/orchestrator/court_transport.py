@@ -8,7 +8,10 @@ from collections.abc import Callable
 from typing import Any
 
 from bumpkin.io.tokens import is_github_models_endpoint
-from bumpkin.request_pacing import apply_model_call_interval, register_rate_limit_cooldown
+from bumpkin.request_pacing import (
+    apply_model_call_interval,
+    register_rate_limit_cooldown,
+)
 from bumpkin.retry import compute_retry_delay, is_retryable_http_code
 
 

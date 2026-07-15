@@ -26,6 +26,43 @@ class SemanticTraceArtifacts:
     contradictions: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class _ManualReviewTransition:
+    result: dict[str, Any]
+    status: str
+    classification_source: str
+    analysis_state: str
+    failure_category: str
+    next_tag: str | None
+    notes: list[str]
+
+
+def _manual_review_transition(
+    *,
+    reasoning: str,
+    classification_source: str,
+    failure_category: str,
+    notes: list[str],
+    note: str,
+) -> _ManualReviewTransition:
+    result = {
+        "status": "manual_review",
+        "label": None,
+        "confidence": None,
+        "reasoning": reasoning,
+        "changelog": None,
+    }
+    return _ManualReviewTransition(
+        result=result,
+        status="manual_review",
+        classification_source=classification_source,
+        analysis_state="manual_review",
+        failure_category=failure_category,
+        next_tag=None,
+        notes=[*notes, note],
+    )
+
+
 def build_semantic_trace_artifacts(
     *,
     result: dict[str, Any],
@@ -67,25 +104,27 @@ def build_semantic_trace_artifacts(
         )
         semantic_rows = explanation_dsl.filter_semantic_delta_rows(explainability_rows)
         if not semantic_rows:
-            updated_result = {
-                "status": "manual_review",
-                "label": None,
-                "confidence": None,
-                "reasoning": (
+            transition = _manual_review_transition(
+                reasoning=(
                     "Explainability contract is unsatisfied because deterministic DSL "
                     "did not emit semantic delta rows. Manual review is required."
                 ),
-                "changelog": None,
-            }
-            updated_status = "manual_review"
-            updated_classification_source = "explainability-contract"
-            updated_analysis_state = "manual_review"
-            updated_failure_category = "explainability_semantic_contract_unsatisfied"
-            updated_next_tag = None
-            explainability_rows = []
-            updated_notes.append(
-                "Fail-closed explainability gate triggered: only path-level or empty explainability rows were available."
+                classification_source="explainability-contract",
+                failure_category="explainability_semantic_contract_unsatisfied",
+                notes=updated_notes,
+                note=(
+                    "Fail-closed explainability gate triggered: only path-level or empty "
+                    "explainability rows were available."
+                ),
             )
+            updated_result = transition.result
+            updated_status = transition.status
+            updated_classification_source = transition.classification_source
+            updated_analysis_state = transition.analysis_state
+            updated_failure_category = transition.failure_category
+            updated_next_tag = transition.next_tag
+            updated_notes = transition.notes
+            explainability_rows = []
         else:
             explainability_rows = semantic_rows
 
@@ -104,26 +143,26 @@ def build_semantic_trace_artifacts(
         proof_obligations
     )
     if updated_status == "classified" and critical_missing_obligations:
-        updated_result = {
-            "status": "manual_review",
-            "label": None,
-            "confidence": None,
-            "reasoning": (
+        transition = _manual_review_transition(
+            reasoning=(
                 "Proof-obligation contract is unsatisfied because critical obligations are missing "
                 f"({', '.join(critical_missing_obligations)}). Manual review is required."
             ),
-            "changelog": None,
-        }
-        updated_status = "manual_review"
-        updated_classification_source = "proof-obligation-contract"
-        updated_analysis_state = "manual_review"
-        updated_failure_category = (
-            updated_failure_category or "proof_obligation_contract_unsatisfied"
+            classification_source="proof-obligation-contract",
+            failure_category=(updated_failure_category or "proof_obligation_contract_unsatisfied"),
+            notes=updated_notes,
+            note=(
+                "Fail-closed proof-obligation gate triggered: classified output downgraded "
+                "to manual_review."
+            ),
         )
-        updated_next_tag = None
-        updated_notes.append(
-            "Fail-closed proof-obligation gate triggered: classified output downgraded to manual_review."
-        )
+        updated_result = transition.result
+        updated_status = transition.status
+        updated_classification_source = transition.classification_source
+        updated_analysis_state = transition.analysis_state
+        updated_failure_category = transition.failure_category
+        updated_next_tag = transition.next_tag
+        updated_notes = transition.notes
     proof_obligations["status"] = updated_status
     final_label_for_trace = (
         str(updated_result.get("label", "")).strip().upper()
